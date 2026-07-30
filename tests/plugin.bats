@@ -35,6 +35,16 @@ plugin_option_is() {
   [ "$(plugin_option "$option_name")" = "$expected" ]
 }
 
+state_counts_sum_to_total() {
+  attention=$(plugin_option '@tmux_agents_count_attention')
+  running=$(plugin_option '@tmux_agents_count_running')
+  unknown=$(plugin_option '@tmux_agents_count_unknown')
+  stale=$(plugin_option '@tmux_agents_count_stale')
+  total=$(plugin_option '@tmux_agents_count_total')
+
+  [ "$((attention + running + unknown + stale))" -eq "$total" ]
+}
+
 retry_until() {
   max_attempts=$1
   shift
@@ -133,6 +143,40 @@ show_running_claude() {
   show_running_agent "$1" claude
 }
 
+show_agent_screen() {
+  target=$1
+  agent_type=$2
+  screen_type=$3
+  tmux_test respawn-pane -k -t "$target" \
+    "$project_root/tests/fixtures/show-$agent_type-$screen_type.sh '$test_bin/$agent_type'"
+
+  retry_until 50 pane_current_command_is "$target" "$agent_type"
+}
+
+show_codex_approval() {
+  show_agent_screen "$1" codex approval
+}
+
+show_claude_approval() {
+  show_agent_screen "$1" claude approval
+}
+
+show_codex_question() {
+  show_agent_screen "$1" codex question
+}
+
+show_claude_question() {
+  show_agent_screen "$1" claude question
+}
+
+show_codex_result() {
+  show_agent_screen "$1" codex result
+}
+
+show_claude_result() {
+  show_agent_screen "$1" claude result
+}
+
 show_unsupported_agent() {
   target=$1
   agent_type=$2
@@ -228,6 +272,203 @@ show_unsupported_agent() {
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
 }
 
+@test "a supported Codex approval Needs attention" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+
+  runtime_options=$(tmux_test show-options -p -t agents:input.0)
+  case "$runtime_options" in
+    *'Would you like to run'*|*'git status --short'*) false ;;
+  esac
+}
+
+@test "a supported Claude Code approval Needs attention" {
+  tmux_test new-window -d -t agents: -n input
+  show_claude_approval agents:input.0
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "a supported Codex question Needs attention" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_question agents:input.0
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "a supported Claude Code question Needs attention" {
+  tmux_test new-window -d -t agents: -n input
+  show_claude_question agents:input.0
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "a Codex Agent that finishes in the background Needs attention" {
+  tmux_test new-window -d -t agents: -n reviewable
+  show_running_codex agents:reviewable.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'running' ]
+
+  show_codex_result agents:reviewable.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+
+  attention_since=$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state_since')
+  case "$attention_since" in
+    ''|*[!0-9]*) false ;;
+  esac
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state_since')" = "$attention_since" ]
+}
+
+@test "a Claude Code Agent that finishes in the background Needs attention" {
+  tmux_test new-window -d -t agents: -n reviewable
+  show_running_claude agents:reviewable.0
+  load_plugin agents:0.0
+
+  show_claude_result agents:reviewable.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "a Running Agent that finishes while selected becomes Stale" {
+  show_running_codex agents:0.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'running' ]
+  state_counts_sum_to_total
+
+  show_codex_result agents:0.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'stale' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  state_counts_sum_to_total
+}
+
+@test "ordinary pane selection acknowledges a Reviewable result as Stale" {
+  tmux_test new-window -d -t agents: -n reviewable
+  show_running_claude agents:reviewable.0
+  load_plugin agents:0.0
+  show_claude_result agents:reviewable.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
+  state_counts_sum_to_total
+
+  tmux_test select-window -t agents:reviewable
+  load_plugin agents:reviewable.0
+
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'stale' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  state_counts_sum_to_total
+}
+
+@test "an unresolved Input request returns to Needs attention after deselection" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  state_counts_sum_to_total
+  attention_since=$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')
+
+  tmux_test select-window -t agents:input
+  load_plugin agents:input.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" = "$attention_since" ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  state_counts_sum_to_total
+
+  while [ "$(date +%s)" -le "$attention_since" ]; do
+    sleep 0.02
+  done
+
+  tmux_test select-window -t agents:0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" -gt "$attention_since" ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  state_counts_sum_to_total
+
+  show_running_codex agents:input.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'running' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+  state_counts_sum_to_total
+}
+
+@test "a new Input request resets its oldest-waiting age" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+  load_plugin agents:0.0
+
+  tmux_test set-option -pq -t agents:input.0 '@tmux_agents_state_since' 1
+  show_codex_question agents:input.0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" != '1' ]
+}
+
+@test "a fast Input response becomes a new background Reviewable result" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+  load_plugin agents:0.0
+
+  tmux_test select-window -t agents:input
+  load_plugin agents:input.0
+  tmux_test set-option -pq -t agents:input.0 '@tmux_agents_state_since' 1
+
+  show_codex_result agents:input.0
+  tmux_test select-window -t agents:0
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_attention_evidence')" = 'result' ]
+  [ -z "$(tmux_test show-options -pqv -t agents:input.0 '@tmux_agents_acknowledged_signature')" ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" != '1' ]
+}
+
 @test "an unsupported Agent screen is Unknown" {
   show_unsupported_agent agents:0.0 codex
 
@@ -313,6 +554,19 @@ show_unsupported_agent() {
   load_plugin agents:0.0
 
   retry_until 100 status_right_contains '#[fg=colour40]1 #[fg=colour220]1 #[fg=colour244]1'
+}
+
+@test "the default widget shows nonzero Needs attention first in an orange pill" {
+  tmux_test new-window -d -t agents: -n running
+  tmux_test new-window -d -t agents: -n input
+  show_running_codex agents:running.0
+  show_codex_approval agents:input.0
+  tmux_test set-option -g status-right '#{tmux_agents}'
+
+  load_plugin agents:0.0
+
+  retry_until 100 status_right_contains \
+    '󰚩 #[fg=colour208]#[fg=colour232,bg=colour208]1#[fg=colour208,bg=default] #[fg=colour40]1 #[fg=colour244]0'
 }
 
 @test "status retains its prior rendering while 25 Agents scan asynchronously" {

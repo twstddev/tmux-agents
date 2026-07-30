@@ -2,7 +2,7 @@
 
 A lightweight tmux plugin for tracking Codex and Claude Code agents across sessions.
 
-It discovers Codex and Claude Code panes across the current tmux server and classifies them as Running, Unknown, or Stale.
+It discovers Codex and Claude Code panes across the current tmux server and classifies them as Needs attention, Running, Unknown, or Stale.
 
 ## Current capabilities
 
@@ -10,13 +10,16 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Ignores ordinary shells, editors, and other foreground commands.
 - Inspects only the pane's visible screen; it does not read scrollback or save captured text.
 - Marks Agents with a supported working footer as Running.
+- Marks supported approvals and questions as Needs attention.
+- Changes a Running Agent that finishes in the background to Needs attention, while a selected completion becomes Stale.
+- Changes a Reviewable result to Stale after its pane is selected. Selecting an Input request acknowledges it temporarily; it returns to Needs attention if the user leaves without responding.
 - Marks a first-discovered background idle Agent as Unknown and a selected idle Agent as Stale.
 - Changes an Unknown idle Agent to Stale after it is selected and scanned.
 - Keeps unsupported or ambiguous Agent screens Unknown instead of guessing their state.
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps five numeric count options available, including zero values.
 - Refreshes status-driven scans asynchronously, retaining the previous widget while the next scan runs.
-- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional green Running count, a conditional yellow Unknown count, and a muted Stale count.
+- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, a conditional yellow Unknown count, and a muted Stale count.
 
 ## Requirements
 
@@ -66,4 +69,4 @@ The following global tmux user options always contain numeric values:
 - `@tmux_agents_count_stale`
 - `@tmux_agents_count_total`
 
-The Running, Unknown, Stale, and total options reflect each completed scan. Needs attention is planned but currently reports zero.
+All five options reflect each completed scan. The four state counts are mutually exclusive and sum to the total.
