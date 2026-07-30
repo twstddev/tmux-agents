@@ -14,6 +14,10 @@ setup() {
 
 teardown() {
   tmux_test kill-server >/dev/null 2>&1 || true
+  if [ -n "${status_client_pid:-}" ]; then
+    exec 9>&-
+    wait "$status_client_pid" >/dev/null 2>&1 || true
+  fi
 }
 
 tmux_test() {
@@ -22,6 +26,13 @@ tmux_test() {
 
 plugin_option() {
   tmux_test show-options -gv "$1"
+}
+
+plugin_option_is() {
+  option_name=$1
+  expected=$2
+
+  [ "$(plugin_option "$option_name")" = "$expected" ]
 }
 
 retry_until() {
@@ -57,6 +68,32 @@ pane_current_command_is() {
   [ "$(tmux_test display-message -p -t "$target" '#{pane_current_command}')" = "$expected" ]
 }
 
+status_client_is_attached() {
+  [ -n "$(tmux_test list-clients -F '#{client_name}')" ]
+}
+
+attach_status_client() {
+  status_client_pipe="$BATS_TEST_TMPDIR/status-client.pipe"
+  mkfifo "$status_client_pipe"
+  exec 9<>"$status_client_pipe"
+
+  case "$(uname -s)" in
+    Darwin)
+      script -q /dev/null env TMUX= TERM=xterm-256color \
+        tmux -S "$socket_path" -f /dev/null attach-session -t agents \
+        <&9 >/dev/null 2>&1 &
+      ;;
+    *)
+      script -q -c \
+        "env TMUX= TERM=xterm-256color tmux -S '$socket_path' -f /dev/null attach-session -t agents" \
+        /dev/null <&9 >/dev/null 2>&1 &
+      ;;
+  esac
+  status_client_pid=$!
+
+  retry_until 50 status_client_is_attached
+}
+
 load_plugin() {
   target=${1:-agents:0.0}
   tmux_test run-shell -t "$target" "$project_root/tmux-agents.tmux '#{pane_id}'"
@@ -77,6 +114,32 @@ show_idle_codex() {
 
 show_idle_claude() {
   show_idle_agent "$1" claude
+}
+
+show_running_agent() {
+  target=$1
+  agent_type=$2
+  tmux_test respawn-pane -k -t "$target" \
+    "$project_root/tests/fixtures/show-$agent_type-running.sh '$test_bin/$agent_type'"
+
+  retry_until 50 pane_current_command_is "$target" "$agent_type"
+}
+
+show_running_codex() {
+  show_running_agent "$1" codex
+}
+
+show_running_claude() {
+  show_running_agent "$1" claude
+}
+
+show_unsupported_agent() {
+  target=$1
+  agent_type=$2
+  tmux_test respawn-pane -k -t "$target" \
+    "$project_root/tests/fixtures/show-unsupported.sh '$test_bin/$agent_type'"
+
+  retry_until 50 pane_current_command_is "$target" "$agent_type"
 }
 
 @test "loading the plugin is idempotent and leaves status placement alone" {
@@ -145,6 +208,39 @@ show_idle_claude() {
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
+@test "recognized Codex and Claude Code work is Running and counted" {
+  tmux_test new-window -d -t agents: -n codex-agent
+  tmux_test new-session -d -s other -x 80 -y 24
+  show_running_codex agents:codex-agent.0
+  show_running_claude other:0.0
+
+  load_plugin agents:0.0
+
+  sleep 0.05
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:codex-agent.0 '@tmux_agents_state')" = 'running' ]
+  [ "$(tmux_test show-options -pv -t other:0.0 '@tmux_agents_state')" = 'running' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '2' ]
+  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
+}
+
+@test "an unsupported Agent screen is Unknown" {
+  show_unsupported_agent agents:0.0 codex
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_type')" = 'codex' ]
+  [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'unknown' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
 @test "Codex and Claude Code are discovered across sessions while shells are ignored" {
   tmux_test new-window -d -t agents: -n codex-agent
   tmux_test new-session -d -s other -x 80 -y 24
@@ -204,6 +300,47 @@ show_idle_claude() {
   load_plugin agents:0.0
 
   retry_until 100 status_right_contains '#[fg=colour220]1 #[fg=colour244]1'
+}
+
+@test "the default widget shows nonzero Running in green before Unknown and Stale" {
+  tmux_test new-window -d -t agents: -n running
+  tmux_test new-window -d -t agents: -n unknown
+  show_running_codex agents:running.0
+  show_unsupported_agent agents:unknown.0 claude
+  show_idle_codex agents:0.0
+  tmux_test set-option -g status-right '#{tmux_agents}'
+
+  load_plugin agents:0.0
+
+  retry_until 100 status_right_contains '#[fg=colour40]1 #[fg=colour220]1 #[fg=colour244]1'
+}
+
+@test "status retains its prior rendering while 25 Agents scan asynchronously" {
+  tmux_test set-option -g status-interval 0
+  tmux_test set-option -g status off
+  tmux_test set-option -g status-right '#{tmux_agents}'
+  load_plugin agents:0.0
+  attach_status_client
+
+  index=1
+  while [ "$index" -le 25 ]; do
+    tmux_test new-window -d -t agents: -n "running-$index"
+    show_running_codex "agents:running-$index.0"
+    index=$((index + 1))
+  done
+
+  tmux_test set-option -g status-interval 2
+  tmux_test set-option -g status on
+  rendered_status=$(tmux_test display-message -p '#{E:status-right}')
+
+  case "$rendered_status" in
+    *'󰚩 0'*) ;;
+    *) false ;;
+  esac
+  [ "$(tmux_test display-message -p '#{session_name}')" = 'agents' ]
+  retry_until 100 plugin_option_is '@tmux_agents_count_running' '25'
+  retry_until 100 plugin_option_is '@tmux_agents_count_total' '25'
+  retry_until 100 status_right_contains '#[fg=colour40]25'
 }
 
 @test "the explicit default placeholder renders the robot and Stale zero" {

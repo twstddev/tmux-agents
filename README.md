@@ -2,18 +2,21 @@
 
 A lightweight tmux plugin for tracking Codex and Claude Code agents across sessions.
 
-It discovers idle Codex and Claude Code panes across the current tmux server and shows whether their earlier output has been acknowledged.
+It discovers Codex and Claude Code panes across the current tmux server and classifies them as Running, Unknown, or Stale.
 
 ## Current capabilities
 
 - Discovers foreground `codex` and `claude` processes across all sessions, windows, and panes in the current tmux server.
 - Ignores ordinary shells, editors, and other foreground commands.
 - Inspects only the pane's visible screen; it does not read scrollback or save captured text.
+- Marks Agents with a supported working footer as Running.
 - Marks a first-discovered background idle Agent as Unknown and a selected idle Agent as Stale.
 - Changes an Unknown idle Agent to Stale after it is selected and scanned.
+- Keeps unsupported or ambiguous Agent screens Unknown instead of guessing their state.
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps five numeric count options available, including zero values.
-- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional yellow Unknown count, and a muted Stale count.
+- Refreshes status-driven scans asynchronously, retaining the previous widget while the next scan runs.
+- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional green Running count, a conditional yellow Unknown count, and a muted Stale count.
 
 ## Requirements
 
@@ -29,23 +32,29 @@ Add tmux-agents and place its widget in `tmux.conf` before TPM is initialized:
 
 ```tmux
 set -g @plugin 'twstddev/tmux-agents'
+set -g status-interval 2
 set -ag status-right ' #{tmux_agents}'
 ```
 
 Press prefix + <kbd>I</kbd> to install it. The plugin replaces only an explicitly configured placeholder and does not otherwise change status-bar placement.
 
-## Test a local checkout
+## Install manually
 
-TPM remains the normal installation path. To test changes from a local checkout, temporarily disable the `twstddev/tmux-agents` TPM declaration so the plugin is not loaded twice.
+Clone the plugin into the standard tmux plugin directory:
 
-Add `#{tmux_agents}` to the final `status-right` definition, after any theme or styling file that replaces it, then load the local entry point immediately afterward:
-
-```tmux
-set -g status-right '#{tmux_agents} %H:%M'
-run-shell /absolute/path/to/tmux-agents/tmux-agents.tmux
+```sh
+git clone https://github.com/twstddev/tmux-agents ~/.tmux/plugins/tmux-agents
 ```
 
-Replace the example status value with your existing status styling, keeping the `#{tmux_agents}` placeholder. Reload `tmux.conf` after each local change.
+Then add the widget and plugin entry point to `tmux.conf`:
+
+```tmux
+set -g status-interval 2
+set -ag status-right ' #{tmux_agents}'
+run-shell ~/.tmux/plugins/tmux-agents/tmux-agents.tmux
+```
+
+Reload `tmux.conf` to start tracking Agents. The plugin replaces only the placeholder shown above and does not otherwise change status-bar placement.
 
 ## Public count options
 
@@ -57,4 +66,4 @@ The following global tmux user options always contain numeric values:
 - `@tmux_agents_count_stale`
 - `@tmux_agents_count_total`
 
-Idle Agents are classified as Unknown or Stale. The Needs attention and Running count options report zero.
+The Running, Unknown, Stale, and total options reflect each completed scan. Needs attention is planned but currently reports zero.
