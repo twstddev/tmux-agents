@@ -2,18 +2,18 @@
 
 A lightweight tmux plugin for tracking Codex and Claude Code agents across sessions.
 
-The project is being built in small, usable slices. The current version recognizes a selected Codex pane showing the supported idle prompt, marks it as Stale, and exposes that state through tmux options and a compact status widget.
+It discovers idle Codex and Claude Code panes across the current tmux server and shows whether their earlier output has been acknowledged.
 
 ## Current capabilities
 
-- Discovers a foreground `codex` process in the selected pane.
+- Discovers foreground `codex` and `claude` processes across all sessions, windows, and panes in the current tmux server.
+- Ignores ordinary shells, editors, and other foreground commands.
 - Inspects only the pane's visible screen; it does not read scrollback or save captured text.
-- Marks a recognized idle Codex Agent as Stale.
+- Marks a first-discovered background idle Agent as Unknown and a selected idle Agent as Stale.
+- Changes an Unknown idle Agent to Stale after it is selected and scanned.
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps five numeric count options available, including zero values.
-- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon and muted Stale count.
-
-Claude Code discovery, additional Agent states, navigation, and the chooser are planned but are not implemented yet.
+- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional yellow Unknown count, and a muted Stale count.
 
 ## Requirements
 
@@ -57,4 +57,4 @@ The following global tmux user options always contain numeric values:
 - `@tmux_agents_count_stale`
 - `@tmux_agents_count_total`
 
-Only Stale classification is implemented in the current slice, so the other state counts remain zero.
+Idle Agents are classified as Unknown or Stale. The Needs attention and Running count options report zero.
