@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+set -e
+
+: "${TMUX_AGENTS_TEST_FZF_INPUT:?}"
+: "${TMUX_AGENTS_TEST_FZF_ARGS:?}"
+: "${TMUX_AGENTS_TEST_FZF_DONE:?}"
+: "${TMUX_AGENTS_TEST_FZF_INITIAL:?}"
+: "${TMUX_AGENTS_TEST_FZF_PREVIEW:?}"
+: "${TMUX_AGENTS_TEST_FZF_STARTED:?}"
+
+: >"$TMUX_AGENTS_TEST_FZF_INPUT"
+: >"$TMUX_AGENTS_TEST_FZF_ARGS"
+: >"$TMUX_AGENTS_TEST_FZF_INITIAL"
+: >"$TMUX_AGENTS_TEST_FZF_PREVIEW"
+: >"$TMUX_AGENTS_TEST_FZF_STARTED"
+
+reload_command=
+preview_command=
+for argument in "$@"; do
+  printf '%s\n' "$argument" >>"$TMUX_AGENTS_TEST_FZF_ARGS"
+  case "$argument" in
+    '--bind=start:reload-sync('*')')
+      reload_command=${argument#'--bind=start:reload-sync('}
+      reload_command=${reload_command%')'}
+      ;;
+    '--preview='*)
+      preview_command=${argument#'--preview='}
+      ;;
+  esac
+done
+
+capture_records() {
+  output_path=$1
+
+  while IFS= read -r -d '' record; do
+    display_record=${record//$'\n'/' | '}
+    printf '%s\n' "$display_record" >>"$output_path"
+
+    pane_id=${record%%$'\t'*}
+    if [ -z "${first_pane_id-}" ]; then
+      case "$pane_id" in
+        %*) first_pane_id=$pane_id ;;
+      esac
+    fi
+    if [ "$pane_id" = "${TMUX_AGENTS_TEST_FZF_SELECTION-}" ]; then
+      selected_record=$record
+    fi
+  done
+}
+
+selected_record=
+if [ -n "$reload_command" ]; then
+  capture_records "$TMUX_AGENTS_TEST_FZF_INITIAL"
+  capture_records "$TMUX_AGENTS_TEST_FZF_INPUT" < <(
+    "${SHELL:-/bin/sh}" -c "$reload_command"
+  )
+else
+  capture_records "$TMUX_AGENTS_TEST_FZF_INPUT"
+fi
+
+if [ -n "$preview_command" ] && [ -n "${first_pane_id-}" ]; then
+  preview_command=${preview_command//\{1\}/"'$first_pane_id'"}
+  "${SHELL:-/bin/sh}" -c "$preview_command" >"$TMUX_AGENTS_TEST_FZF_PREVIEW"
+fi
+
+: >"$TMUX_AGENTS_TEST_FZF_DONE"
+
+if [ -z "$selected_record" ]; then
+  exit 130
+fi
+
+printf '%s\n' "$selected_record"

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -e
+
+: "${TMUX_AGENTS_TEST_REAL_TMUX:?}"
+
+if [ -n "${TMUX_AGENTS_TEST_INITIAL_SCAN_STARTED-}" ] &&
+  [ ! -f "${TMUX_AGENTS_TEST_INITIAL_SCAN_DONE-}" ] &&
+  [ "${1-}" = 'list-panes' ]; then
+  : >"$TMUX_AGENTS_TEST_INITIAL_SCAN_STARTED"
+  sleep "${TMUX_AGENTS_TEST_SCAN_DELAY:-1}"
+  : >"$TMUX_AGENTS_TEST_INITIAL_SCAN_DONE"
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_POST_SWITCH-}" ] &&
+  [ "${1-}" = 'switch-client' ]; then
+  "$TMUX_AGENTS_TEST_REAL_TMUX" "$@"
+  : >"$TMUX_AGENTS_TEST_POST_SWITCH"
+  exit 0
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_POST_SWITCH-}" ] &&
+  [ -f "$TMUX_AGENTS_TEST_POST_SWITCH" ] &&
+  [ "${1-}" = 'list-panes' ]; then
+  sleep "${TMUX_AGENTS_TEST_SCAN_DELAY:-1}"
+fi
+
+exec "$TMUX_AGENTS_TEST_REAL_TMUX" "$@"

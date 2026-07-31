@@ -7,6 +7,9 @@ setup() {
   mkdir -p "$test_bin"
   cp "$(command -v bash)" "$test_bin/codex"
   cp "$(command -v bash)" "$test_bin/claude"
+  cp "$project_root/tests/helpers/fzf" "$test_bin/fzf"
+  cp "$project_root/tests/helpers/tmux" "$test_bin/tmux"
+  chmod +x "$test_bin/fzf" "$test_bin/tmux"
 
   tmux_test new-session -d -s agents -x 80 -y 24
   tmux_test set-option -g remain-on-exit on
@@ -18,10 +21,14 @@ teardown() {
     exec 9>&-
     wait "$status_client_pid" >/dev/null 2>&1 || true
   fi
+  if [ -n "${observer_client_pid:-}" ]; then
+    exec 8>&-
+    wait "$observer_client_pid" >/dev/null 2>&1 || true
+  fi
 }
 
 tmux_test() {
-  TMUX= tmux -S "$socket_path" -f /dev/null "$@"
+  TMUX='' tmux -S "$socket_path" -f /dev/null "$@"
 }
 
 plugin_option() {
@@ -82,26 +89,141 @@ status_client_is_attached() {
   [ -n "$(tmux_test list-clients -F '#{client_name}')" ]
 }
 
-attach_status_client() {
-  status_client_pipe="$BATS_TEST_TMPDIR/status-client.pipe"
-  mkfifo "$status_client_pipe"
-  exec 9<>"$status_client_pipe"
+two_clients_are_attached() {
+  [ "$(tmux_test list-clients -F '#{client_name}' | wc -l | tr -d ' ')" -eq 2 ]
+}
+
+spawn_attached_client() {
+  input_fd=$1
 
   case "$(uname -s)" in
     Darwin)
       script -q /dev/null env TMUX= TERM=xterm-256color \
         tmux -S "$socket_path" -f /dev/null attach-session -t agents \
-        <&9 >/dev/null 2>&1 &
+        <&"$input_fd" >/dev/null 2>&1 &
       ;;
     *)
       script -q -c \
         "env TMUX= TERM=xterm-256color tmux -S '$socket_path' -f /dev/null attach-session -t agents" \
-        /dev/null <&9 >/dev/null 2>&1 &
+        /dev/null <&"$input_fd" >/dev/null 2>&1 &
       ;;
   esac
-  status_client_pid=$!
+  attached_client_pid=$!
+}
+
+attach_status_client() {
+  status_client_pipe="$BATS_TEST_TMPDIR/status-client.pipe"
+  mkfifo "$status_client_pipe"
+  exec 9<>"$status_client_pipe"
+
+  spawn_attached_client 9
+  status_client_pid=$attached_client_pid
 
   retry_until 50 status_client_is_attached
+  status_client_name=$(tmux_test list-clients -F '#{client_name}')
+}
+
+attach_observer_client() {
+  observer_client_pipe="$BATS_TEST_TMPDIR/observer-client.pipe"
+  mkfifo "$observer_client_pipe"
+  exec 8<>"$observer_client_pipe"
+
+  spawn_attached_client 8
+  observer_client_pid=$attached_client_pid
+
+  retry_until 50 two_clients_are_attached
+  while IFS= read -r client_name; do
+    if [ "$client_name" != "$status_client_name" ]; then
+      observer_client_name=$client_name
+    fi
+  done < <(tmux_test list-clients -F '#{client_name}')
+}
+
+client_target() {
+  client_name=$1
+
+  while IFS='|' read -r listed_client listed_target; do
+    if [ "$listed_client" = "$client_name" ]; then
+      printf '%s\n' "$listed_target"
+      return
+    fi
+  done < <(
+    tmux_test list-clients \
+      -F '#{client_name}|#{session_id}:#{window_id}.#{pane_id}'
+  )
+
+  return 1
+}
+
+client_target_is() {
+  client_name=$1
+  expected_target=$2
+
+  [ "$(client_target "$client_name")" = "$expected_target" ]
+}
+
+pane_state_is() {
+  pane_id=$1
+  expected_state=$2
+
+  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_state')" = "$expected_state" ]
+}
+
+enable_fzf_stub() {
+  chooser_input="$BATS_TEST_TMPDIR/chooser-input"
+  chooser_args="$BATS_TEST_TMPDIR/chooser-args"
+  chooser_done="$BATS_TEST_TMPDIR/chooser-done"
+  chooser_initial="$BATS_TEST_TMPDIR/chooser-initial"
+  chooser_preview="$BATS_TEST_TMPDIR/chooser-preview"
+  chooser_started="$BATS_TEST_TMPDIR/chooser-started"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$(command -v tmux)"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_INPUT "$chooser_input"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_ARGS "$chooser_args"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_DONE "$chooser_done"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_INITIAL "$chooser_initial"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_PREVIEW "$chooser_preview"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_STARTED "$chooser_started"
+}
+
+enable_slow_initial_scan() {
+  initial_scan_started="$BATS_TEST_TMPDIR/initial-scan-started"
+  initial_scan_done="$BATS_TEST_TMPDIR/initial-scan-done"
+  tmux_test set-environment -g \
+    TMUX_AGENTS_TEST_INITIAL_SCAN_STARTED "$initial_scan_started"
+  tmux_test set-environment -g \
+    TMUX_AGENTS_TEST_INITIAL_SCAN_DONE "$initial_scan_done"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_SCAN_DELAY 1
+}
+
+initial_scan_has_started() {
+  [ -f "$initial_scan_started" ]
+}
+
+enable_slow_post_selection_scan() {
+  post_switch_marker="$BATS_TEST_TMPDIR/post-switch"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_POST_SWITCH "$post_switch_marker"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_SCAN_DELAY 1
+}
+
+selection_has_switched() {
+  [ -f "$post_switch_marker" ]
+}
+
+client_accepts_new_window() {
+  printf '\002c' >&9
+  sleep 0.02
+  [ "$(tmux_test list-windows -t other -F '#{window_id}' | wc -l | tr -d ' ')" -gt 1 ]
+}
+
+chooser_input_is_ready() {
+  [ -f "$chooser_done" ]
+}
+
+open_chooser() {
+  chooser_key=${1:-A}
+  printf '\002%s' "$chooser_key" >&9
+  retry_until 100 chooser_input_is_ready
 }
 
 load_plugin() {
@@ -608,4 +730,174 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -gv status-right)" = "$installed_status" ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "the chooser groups Agents with useful context and a live screen preview" {
+  tmux_test new-window -d -t agents: -n older-attention
+  tmux_test new-window -d -t agents: -n newer-attention
+  tmux_test new-window -d -t agents: -n stale
+  tmux_test new-window -d -t agents: -n unknown
+  tmux_test new-window -d -t agents: -n running
+  show_codex_approval agents:older-attention.0
+  show_claude_approval agents:newer-attention.0
+  show_idle_claude agents:stale.0
+  show_idle_codex agents:unknown.0
+  show_running_claude agents:running.0
+
+  tmux_test select-window -t agents:stale
+  load_plugin agents:stale.0
+  tmux_test select-window -t agents:0
+  load_plugin agents:0.0
+
+  tmux_test set-option -pq -t agents:older-attention.0 '@tmux_agents_state_since' 10
+  tmux_test set-option -pq -t agents:newer-attention.0 '@tmux_agents_state_since' 20
+  tmux_test select-pane -t agents:older-attention.0 -T 'Old review'
+  tmux_test select-pane -t agents:newer-attention.0 -T 'New approval'
+  tmux_test select-pane -t agents:stale.0 -T 'claude'
+  tmux_test select-pane -t agents:unknown.0 -T ''
+  tmux_test select-pane -t agents:running.0 -T 'Index the docs'
+
+  older_id=$(tmux_test display-message -p -t agents:older-attention.0 '#{pane_id}')
+  newer_id=$(tmux_test display-message -p -t agents:newer-attention.0 '#{pane_id}')
+  stale_id=$(tmux_test display-message -p -t agents:stale.0 '#{pane_id}')
+  unknown_id=$(tmux_test display-message -p -t agents:unknown.0 '#{pane_id}')
+  running_id=$(tmux_test display-message -p -t agents:running.0 '#{pane_id}')
+
+  enable_fzf_stub
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  expected_order=$(printf '%s\n' \
+    "$older_id" "$newer_id" "$stale_id" "$unknown_id" "$running_id")
+  actual_order=$(cut -f1 "$chooser_input")
+  [ "$actual_order" = "$expected_order" ]
+
+  chooser_items=$(<"$chooser_input")
+  case "$chooser_items" in
+    *"$older_id	Old review | Needs attention · Codex · agents:older-attention.0 · "*" · "*[smhd]) ;;
+    *) false ;;
+  esac
+  case "$chooser_items" in
+    *"$stale_id	claude |"*) false ;;
+  esac
+  case "$chooser_items" in
+    *"$unknown_id	Unknown · Codex · agents:unknown.0 · "*) ;;
+    *) false ;;
+  esac
+  case "$chooser_items" in
+    *"$running_id	Index the docs | Running · Claude Code · agents:running.0 · "*) ;;
+    *) false ;;
+  esac
+  case "$(<"$chooser_preview")" in
+    *'Press enter to confirm or esc to cancel'*) ;;
+    *) false ;;
+  esac
+
+  chooser_options=$(<"$chooser_args")
+  case "$chooser_options" in
+    *'--preview'*'tmux capture-pane -p -e -t {1}'*) ;;
+    *) false ;;
+  esac
+  case "$chooser_options" in
+    *'--preview-window=right,60%,wrap'*) ;;
+    *) false ;;
+  esac
+  case "$chooser_options" in
+    *'--no-sort'*) false ;;
+  esac
+  case "$chooser_options" in
+    *'--tmux=center,80%,80%'*) ;;
+    *) false ;;
+  esac
+  case "$chooser_options" in
+    *'--height='*|*'border-native'*) false ;;
+  esac
+
+  chooser_binding=$(tmux_test list-keys -T prefix A)
+  case "$chooser_binding" in
+    *'display-popup'*) false ;;
+  esac
+}
+
+@test "chooser selection switches only its client and acknowledges the Agent" {
+  tmux_test new-session -d -s other -n decoy -x 80 -y 24
+  tmux_test new-window -d -t other: -n target
+  tmux_test split-window -d -t other:target.0
+  tmux_test select-pane -t other:target.0
+  tmux_test select-window -t other:decoy
+  show_running_codex other:target.1
+  load_plugin agents:0.0
+  show_codex_result other:target.1
+  load_plugin agents:0.0
+
+  target_id=$(tmux_test display-message -p -t other:target.1 '#{pane_id}')
+  target_location=$(tmux_test display-message -p -t "$target_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  [ "$(tmux_test show-options -pv -t "$target_id" '@tmux_agents_state')" = 'attention' ]
+
+  enable_fzf_stub
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_SELECTION "$target_id"
+  attach_status_client
+  attach_observer_client
+  observer_target=$(client_target "$observer_client_name")
+  load_plugin agents:0.0
+  open_chooser
+
+  retry_until 100 client_target_is "$status_client_name" "$target_location"
+  client_target_is "$observer_client_name" "$observer_target"
+  retry_until 100 pane_state_is "$target_id" stale
+}
+
+@test "the chooser prefix binding is configurable" {
+  tmux_test new-window -d -t agents: -n background
+  show_idle_codex agents:background.0
+  tmux_test set-option -g '@tmux_agents_chooser_key' G
+
+  enable_fzf_stub
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser G
+
+  [ -s "$chooser_input" ]
+}
+
+@test "chooser closes before selected Agent state refresh completes" {
+  tmux_test new-session -d -s other -n target -x 80 -y 24
+  show_idle_codex other:target.0
+  load_plugin agents:0.0
+
+  target_id=$(tmux_test display-message -p -t other:target.0 '#{pane_id}')
+  [ "$(tmux_test show-options -pv -t "$target_id" '@tmux_agents_state')" = 'unknown' ]
+
+  enable_fzf_stub
+  enable_slow_post_selection_scan
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_SELECTION "$target_id"
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  retry_until 100 selection_has_switched
+  retry_until 20 client_accepts_new_window
+  retry_until 100 pane_state_is "$target_id" stale
+}
+
+@test "chooser opens with a loading row before its fresh scan completes" {
+  tmux_test new-window -d -t agents: -n background
+  show_idle_codex agents:background.0
+  load_plugin agents:0.0
+
+  enable_fzf_stub
+  enable_slow_initial_scan
+  attach_status_client
+  printf '\002A' >&9
+
+  retry_until 100 initial_scan_has_started
+  [ -f "$chooser_started" ]
+  [ ! -f "$initial_scan_done" ]
+  case "$(<"$chooser_initial")" in
+    *'Loading Agents…'*) ;;
+    *) false ;;
+  esac
+  retry_until 100 chooser_input_is_ready
 }

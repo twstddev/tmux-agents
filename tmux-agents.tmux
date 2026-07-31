@@ -34,5 +34,12 @@ ensure_count '@tmux_agents_count_total'
 install_placeholder 'status-left'
 install_placeholder 'status-right'
 
+chooser_key=$(tmux show-options -gqv '@tmux_agents_chooser_key')
+if [ -z "$chooser_key" ]; then
+  chooser_key='A'
+fi
+tmux bind-key "$chooser_key" run-shell -b \
+  "\"$plugin_root/scripts/choose.sh\" '#{client_name}' '#{pane_id}'"
+
 selected_pane=${1:-$(tmux display-message -p '#{pane_id}')}
 "$plugin_root/scripts/status.sh" "$selected_pane"

@@ -20,11 +20,13 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Keeps five numeric count options available, including zero values.
 - Refreshes status-driven scans asynchronously, retaining the previous widget while the next scan runs.
 - Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, a conditional yellow Unknown count, and a muted Stale count.
+- Opens an fzf Agent chooser with prefix + <kbd>A</kbd>. The chooser groups Agents by Needs attention, Stale, Unknown, then Running; shows pane context and state age; previews the highlighted pane's current screen; and can switch the invoking client across sessions.
 
 ## Requirements
 
-- tmux 3.2 or newer
+- tmux 3.3 or newer
 - Bash, with runtime scripts compatible with Bash 3.2
+- fzf 0.61.3 or newer
 - A Nerd Font for the robot icon
 
 Contributors also need Bats and ShellCheck.
@@ -58,6 +60,20 @@ run-shell ~/.tmux/plugins/tmux-agents/tmux-agents.tmux
 ```
 
 Reload `tmux.conf` to start tracking Agents. The plugin replaces only the placeholder shown above and does not otherwise change status-bar placement.
+
+## Browse Agents
+
+Press prefix + <kbd>A</kbd> to open the Agent chooser. It appears immediately with a loading row while it performs a fresh Agent scan. Needs attention Agents then appear first, with the longest-waiting request at the top. Stale, Unknown, and Running Agents follow. Typing uses normal fzf relevance sorting.
+
+Each entry shows its state, Agent type, tmux location, working directory, and state age. A useful Agent title appears on a separate first line. The right-side preview reads only the highlighted pane's current visible screen and preserves its colors and text attributes.
+
+Select an entry to switch the client that opened the chooser to that Agent. Selecting an Agent also acknowledges it in the same way as ordinary tmux navigation.
+
+Set `@tmux_agents_chooser_key` before loading the plugin to change the default uppercase <kbd>A</kbd> binding:
+
+```tmux
+set -g @tmux_agents_chooser_key 'G'
+```
 
 ## Public count options
 
