@@ -33,11 +33,25 @@ state_remove_agent() {
 
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_type' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_identity' 2>/dev/null || true
+  tmux set-option -puq -t "$state_pane_id" '@tmux_agents_process_identity' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_state_source' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_evidence' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_state' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_state_since' 2>/dev/null || true
   state_clear_attention_event "$state_pane_id"
+}
+
+state_record_process_identity() {
+  state_pane_id=$1
+  state_process_identity=$2
+
+  if [ "$(tmux show-options -pqv -t "$state_pane_id" \
+    '@tmux_agents_process_identity')" = "$state_process_identity" ]; then
+    return 0
+  fi
+
+  tmux set-option -pq -t "$state_pane_id" \
+    '@tmux_agents_process_identity' "$state_process_identity"
 }
 
 state_starts_new_wait() {

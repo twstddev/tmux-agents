@@ -7,9 +7,10 @@ setup() {
   mkdir -p "$test_bin"
   cp "$(command -v bash)" "$test_bin/codex"
   cp "$(command -v bash)" "$test_bin/claude"
+  cp "$project_root/tests/helpers/ps" "$test_bin/ps"
   cp "$project_root/tests/helpers/fzf" "$test_bin/fzf"
   cp "$project_root/tests/helpers/tmux" "$test_bin/tmux"
-  chmod +x "$test_bin/fzf" "$test_bin/tmux"
+  chmod +x "$test_bin/ps" "$test_bin/fzf" "$test_bin/tmux"
 
   tmux_test new-session -d -s agents -x 80 -y 24
   tmux_test set-option -g remain-on-exit on
@@ -326,6 +327,36 @@ show_unsupported_agent() {
   retry_until 50 pane_current_command_is "$target" "$agent_type"
 }
 
+show_host_process() {
+  target=$1
+
+  tmux_test respawn-pane -k -t "$target" \
+    "$project_root/tests/fixtures/show-unsupported.sh '$(command -v bash)'"
+
+  retry_until 50 pane_current_command_is "$target" bash
+}
+
+enable_process_snapshot() {
+  process_snapshot="$BATS_TEST_TMPDIR/process-snapshot"
+  process_snapshot_count="$BATS_TEST_TMPDIR/process-snapshot-count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_PROCESS_SNAPSHOT="$process_snapshot"
+  export TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT="$process_snapshot_count"
+  export PATH="$test_bin:$PATH"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_SNAPSHOT "$process_snapshot"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT "$process_snapshot_count"
+}
+
+set_process_snapshot() {
+  printf '%s\n' "$@" >"$process_snapshot"
+}
+
+pane_process_id() {
+  tmux_test display-message -p -t "$1" '#{pane_pid}'
+}
+
 send_hook_event() {
   target=$1
   agent_type=$2
@@ -336,7 +367,8 @@ send_hook_event() {
   server_pid=$(tmux_test display-message -p -t "$target" '#{pid}')
 
   if [ -n "${TMUX_AGENTS_TEST_REFRESH_COUNT-}" ] ||
-    [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ]; then
+    [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ] ||
+    [ -n "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT-}" ]; then
     printf '%s\n' "{\"session_id\":\"$session_id\",\"turn_id\":\"$turn_id\"}" |
       PATH="$test_bin:$PATH" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$pane_id" \
         "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
@@ -886,6 +918,120 @@ send_hook_event() {
   [ -z "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_state')" ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
+}
+
+@test "process-tree discovery finds wrapped and hosted Agents from one shared snapshot" {
+  tmux_test new-window -d -t agents: -n wrapper
+  tmux_test new-window -d -t agents: -n host
+  show_host_process agents:wrapper.0
+  show_host_process agents:host.0
+  enable_process_snapshot
+
+  wrapper_pid=$(pane_process_id agents:wrapper.0)
+  host_pid=$(pane_process_id agents:host.0)
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4101 $wrapper_pid wrapper" \
+    '4102 4101 claude' \
+    "$host_pid 1 bash" \
+    "4201 $host_pid nvim" \
+    '4202 4201 codex'
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_type')" = 'claude' ]
+  [ "$(tmux_test show-options -pv -t agents:host.0 '@tmux_agents_type')" = 'codex' ]
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_identity')" = 'pid:4102' ]
+  [ "$(tmux_test show-options -pv -t agents:host.0 '@tmux_agents_identity')" = 'pid:4202' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
+  [ "$(<"$process_snapshot_count")" = '1' ]
+}
+
+@test "process-tree reconciliation resets replaced Agents and removes exited ones" {
+  tmux_test new-window -d -t agents: -n wrapper
+  show_host_process agents:wrapper.0
+  enable_process_snapshot
+
+  wrapper_pid=$(pane_process_id agents:wrapper.0)
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4301 $wrapper_pid codex"
+  load_plugin agents:0.0
+  tmux_test set-option -pq -t agents:wrapper.0 '@tmux_agents_state_since' 1
+
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4302 $wrapper_pid codex"
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_identity')" = 'pid:4302' ]
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_state_since')" -gt 1 ]
+
+  set_process_snapshot "$wrapper_pid 1 bash"
+  load_plugin agents:0.0
+
+  [ -z "$(tmux_test show-options -pqv -t agents:wrapper.0 '@tmux_agents_type')" ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "process-tree reconciliation replaces an old hook Agent with a passive Agent" {
+  tmux_test new-window -d -t agents: -n wrapper
+  show_host_process agents:wrapper.0
+  enable_process_snapshot
+
+  wrapper_pid=$(pane_process_id agents:wrapper.0)
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4401 $wrapper_pid codex"
+  load_plugin agents:0.0
+  tmux_test set-option -puq -t agents:wrapper.0 '@tmux_agents_process_identity'
+  send_hook_event agents:wrapper.0 codex start codex-session-1
+  send_hook_event agents:wrapper.0 codex running codex-session-1
+  tmux_test set-option -pq -t agents:wrapper.0 '@tmux_agents_state_since' 1
+
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4402 $wrapper_pid claude"
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_type')" = 'claude' ]
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_state_source')" = 'passive' ]
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_identity')" = 'pid:4402' ]
+  [ "$(tmux_test show-options -pv -t agents:wrapper.0 '@tmux_agents_state_since')" -gt 1 ]
+}
+
+@test "a hook start does not take a process snapshot" {
+  tmux_test new-window -d -t agents: -n wrapper
+  show_host_process agents:wrapper.0
+  enable_process_snapshot
+
+  wrapper_pid=$(pane_process_id agents:wrapper.0)
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4501 $wrapper_pid codex"
+  load_plugin agents:0.0
+  printf '%s\n' 0 >"$process_snapshot_count"
+  send_hook_event agents:wrapper.0 codex start codex-session-1
+
+  [ "$(<"$process_snapshot_count")" = '0' ]
+}
+
+@test "a non-start hook event does not take a process snapshot" {
+  tmux_test new-window -d -t agents: -n wrapper
+  show_host_process agents:wrapper.0
+  enable_process_snapshot
+
+  wrapper_pid=$(pane_process_id agents:wrapper.0)
+  set_process_snapshot \
+    "$wrapper_pid 1 bash" \
+    "4601 $wrapper_pid codex"
+  load_plugin agents:0.0
+  printf '%s\n' 0 >"$process_snapshot_count"
+
+  send_hook_event agents:wrapper.0 codex running codex-session-1
+
+  [ "$(<"$process_snapshot_count")" = '0' ]
 }
 
 @test "closing an Agent pane removes it from the counts" {

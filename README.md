@@ -6,8 +6,8 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 
 ## Current capabilities
 
-- Discovers foreground `codex` and `claude` processes across all sessions, windows, and panes in the current tmux server.
-- Ignores ordinary shells, editors, and other foreground commands.
+- Discovers `codex` and `claude` processes anywhere below a pane across all sessions, windows, and panes in the current tmux server.
+- Recognizes Agents below ordinary wrapper and editor processes while ignoring panes with no supported Agent process.
 - Inspects only the pane's visible screen; it does not read scrollback or save captured text.
 - Marks Agents with a supported working footer as Running.
 - Marks supported approvals and questions as Needs attention.
@@ -162,7 +162,7 @@ All four options reflect each completed scan. The three state counts are mutuall
 ## Detection and privacy limits
 
 - Detection recognizes the current English Codex and Claude Code TUI layouts. Agents using customized, translated, or newly changed layouts are treated as Stale unless a Running or Needs attention signal is recognized.
-- Only panes whose direct foreground command is `codex` or `claude` are discovered. Wrapper processes are not followed.
+- Discovery follows each pane's process tree to find `codex` and `claude` descendants. One Agent is represented per pane; unsupported processes do not create an Agent entry.
 - Discovery covers every pane in the current tmux server, but does not cross into a separate tmux socket server, remote host, or nested tmux instance.
 - Classification is passive screen inference. tmux-agents does not configure lifecycle hooks, terminal bells, or either Agent CLI.
 - Each scan captures only the visible screen grid. It does not request scrollback, read transcripts, or persist captured text. Pane-scoped metadata contains Agent type, state and transition time, attention and acknowledgment data, detector evidence, and a non-reversible screen signature. It disappears when the pane closes.

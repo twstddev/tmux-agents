@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [ -z "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT-}" ]; then
+  PATH=/usr/bin:/bin command ps "$@"
+  exit 0
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT-}" ]; then
+  snapshot_count=0
+  if [ -f "$TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT" ]; then
+    snapshot_count=$(<"$TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT")
+  fi
+  printf '%s\n' "$((snapshot_count + 1))" >"$TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT"
+fi
+
+cat "$TMUX_AGENTS_TEST_PROCESS_SNAPSHOT"
