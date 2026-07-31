@@ -41,5 +41,12 @@ fi
 tmux bind-key "$chooser_key" run-shell -b \
   "\"$plugin_root/scripts/choose.sh\" '#{client_name}' '#{pane_id}'"
 
+jump_key=$(tmux show-options -gqv '@tmux_agents_jump_key')
+if [ -z "$jump_key" ]; then
+  jump_key='a'
+fi
+tmux bind-key "$jump_key" run-shell -b \
+  "\"$plugin_root/scripts/jump.sh\" '#{client_name}' '#{pane_id}'"
+
 selected_pane=${1:-$(tmux display-message -p '#{pane_id}')}
 "$plugin_root/scripts/status.sh" "$selected_pane"

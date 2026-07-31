@@ -169,6 +169,17 @@ pane_state_is() {
   [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_state')" = "$expected_state" ]
 }
 
+client_messages_contain() {
+  client_name=$1
+  expected=$2
+
+  case "$(tmux_test show-messages -t "$client_name")" in
+    *"$expected"*) return 0 ;;
+  esac
+
+  return 1
+}
+
 enable_fzf_stub() {
   chooser_input="$BATS_TEST_TMPDIR/chooser-input"
   chooser_args="$BATS_TEST_TMPDIR/chooser-args"
@@ -900,4 +911,112 @@ show_unsupported_agent() {
     *) false ;;
   esac
   retry_until 100 chooser_input_is_ready
+}
+
+@test "direct jump refreshes the queue and switches only its client to the oldest Input request" {
+  tmux_test new-session -d -s other -n no-longer-waiting -x 80 -y 24
+  tmux_test new-window -d -t other: -n oldest-waiting
+  tmux_test new-window -d -t other: -n newer-waiting
+  show_codex_approval other:no-longer-waiting.0
+  show_claude_approval other:oldest-waiting.0
+  show_codex_question other:newer-waiting.0
+  load_plugin agents:0.0
+
+  tmux_test set-option -pq -t other:no-longer-waiting.0 \
+    '@tmux_agents_state_since' 10
+  tmux_test set-option -pq -t other:oldest-waiting.0 \
+    '@tmux_agents_state_since' 20
+  tmux_test set-option -pq -t other:newer-waiting.0 \
+    '@tmux_agents_state_since' 30
+  show_running_codex other:no-longer-waiting.0
+
+  oldest_id=$(tmux_test display-message -p -t other:oldest-waiting.0 '#{pane_id}')
+  oldest_location=$(tmux_test display-message -p -t "$oldest_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+
+  attach_status_client
+  attach_observer_client
+  observer_target=$(client_target "$observer_client_name")
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$oldest_location"
+  client_target_is "$observer_client_name" "$observer_target"
+  pane_state_is other:no-longer-waiting.0 running
+  case "$(tmux_test list-keys -T prefix a)" in
+    *fzf*) false ;;
+  esac
+}
+
+@test "repeated direct jumps drain Reviewable results from oldest to newest" {
+  tmux_test new-session -d -s other -n oldest-result -x 80 -y 24
+  tmux_test new-window -d -t other: -n newer-result
+  show_running_codex other:oldest-result.0
+  show_running_claude other:newer-result.0
+  load_plugin agents:0.0
+  show_codex_result other:oldest-result.0
+  show_claude_result other:newer-result.0
+  load_plugin agents:0.0
+
+  tmux_test set-option -pq -t other:oldest-result.0 \
+    '@tmux_agents_state_since' 10
+  tmux_test set-option -pq -t other:newer-result.0 \
+    '@tmux_agents_state_since' 20
+  oldest_id=$(tmux_test display-message -p -t other:oldest-result.0 '#{pane_id}')
+  newer_id=$(tmux_test display-message -p -t other:newer-result.0 '#{pane_id}')
+  oldest_location=$(tmux_test display-message -p -t "$oldest_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  newer_location=$(tmux_test display-message -p -t "$newer_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+
+  attach_status_client
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$oldest_location"
+  retry_until 100 pane_state_is "$oldest_id" stale
+  pane_state_is "$newer_id" attention
+
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$newer_location"
+  retry_until 100 pane_state_is "$newer_id" stale
+  plugin_option_is '@tmux_agents_count_attention' 0
+}
+
+@test "an unresolved Input request returns to the direct-jump queue after leaving" {
+  tmux_test new-session -d -s other -n input -x 80 -y 24
+  show_codex_approval other:input.0
+  load_plugin agents:0.0
+  tmux_test set-option -pq -t other:input.0 '@tmux_agents_state_since' 1
+
+  input_id=$(tmux_test display-message -p -t other:input.0 '#{pane_id}')
+  input_location=$(tmux_test display-message -p -t "$input_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  original_location=$(tmux_test display-message -p -t agents:0.0 \
+    '#{session_id}:#{window_id}.#{pane_id}')
+
+  attach_status_client
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$input_location"
+  pane_state_is "$input_id" attention
+
+  tmux_test switch-client -c "$status_client_name" -t agents:0.0
+  retry_until 100 client_target_is "$status_client_name" "$original_location"
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$input_location"
+  pane_state_is "$input_id" attention
+}
+
+@test "a configurable direct jump reports an empty queue without moving" {
+  tmux_test set-option -g '@tmux_agents_jump_key' j
+  attach_status_client
+  original_target=$(client_target "$status_client_name")
+  load_plugin agents:0.0
+
+  printf '\002j' >&9
+
+  retry_until 100 client_messages_contain "$status_client_name" \
+    'tmux-agents: no Agent needs attention'
+  client_target_is "$status_client_name" "$original_target"
 }

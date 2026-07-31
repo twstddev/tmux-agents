@@ -21,6 +21,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Refreshes status-driven scans asynchronously, retaining the previous widget while the next scan runs.
 - Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, a conditional yellow Unknown count, and a muted Stale count.
 - Opens an fzf Agent chooser with prefix + <kbd>A</kbd>. The chooser groups Agents by Needs attention, Stale, Unknown, then Running; shows pane context and state age; previews the highlighted pane's current screen; and can switch the invoking client across sessions.
+- Jumps directly to the longest-waiting Agent that Needs attention with prefix + <kbd>a</kbd>.
 
 ## Requirements
 
@@ -73,6 +74,16 @@ Set `@tmux_agents_chooser_key` before loading the plugin to change the default u
 
 ```tmux
 set -g @tmux_agents_chooser_key 'G'
+```
+
+## Jump through Needs attention
+
+Press prefix + <kbd>a</kbd> to refresh Agent state and switch directly to the longest-waiting Agent that Needs attention. Repeating the shortcut moves through Reviewable results from oldest to newest as each result is acknowledged. If no Agent needs attention, tmux shows a short message and leaves you in place.
+
+Set `@tmux_agents_jump_key` before loading the plugin to change the default lowercase <kbd>a</kbd> binding:
+
+```tmux
+set -g @tmux_agents_jump_key 'g'
 ```
 
 ## Public count options
