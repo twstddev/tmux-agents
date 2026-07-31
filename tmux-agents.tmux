@@ -40,7 +40,6 @@ install_placeholders() {
 
 ensure_count '@tmux_agents_count_attention'
 ensure_count '@tmux_agents_count_running'
-ensure_count '@tmux_agents_count_unknown'
 ensure_count '@tmux_agents_count_stale'
 ensure_count '@tmux_agents_count_total'
 

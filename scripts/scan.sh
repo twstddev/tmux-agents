@@ -5,7 +5,6 @@ set -e
 selected_pane=$1
 attention_count=0
 running_count=0
-unknown_count=0
 stale_count=0
 total_count=0
 
@@ -202,18 +201,17 @@ while IFS='|' read -r pane_id pane_command; do
       [ "$pane_attention_signature" != "$current_screen_signature" ]; then
       set_agent_state "$pane_id" "$pane_command" 'attention' 'result' "$current_screen_signature"
     elif [ -z "$pane_state" ]; then
-      set_agent_state "$pane_id" "$pane_command" 'unknown'
+      set_agent_state "$pane_id" "$pane_command" 'stale'
     else
       tmux set-option -pq -t "$pane_id" '@tmux_agents_type' "$pane_command"
     fi
   else
-    set_agent_state "$pane_id" "$pane_command" 'unknown'
+    set_agent_state "$pane_id" "$pane_command" 'stale'
   fi
 
   case "$pane_state" in
     attention) attention_count=$((attention_count + 1)) ;;
     running) running_count=$((running_count + 1)) ;;
-    unknown) unknown_count=$((unknown_count + 1)) ;;
     stale) stale_count=$((stale_count + 1)) ;;
     *) continue ;;
   esac
@@ -222,6 +220,5 @@ done < <(tmux list-panes -a -F '#{pane_id}|#{pane_current_command}')
 
 tmux set-option -gq '@tmux_agents_count_attention' "$attention_count"
 tmux set-option -gq '@tmux_agents_count_running' "$running_count"
-tmux set-option -gq '@tmux_agents_count_unknown' "$unknown_count"
 tmux set-option -gq '@tmux_agents_count_stale' "$stale_count"
 tmux set-option -gq '@tmux_agents_count_total' "$total_count"

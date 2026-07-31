@@ -2,7 +2,7 @@
 
 A lightweight tmux plugin for tracking Codex and Claude Code agents across sessions.
 
-It discovers Codex and Claude Code panes across the current tmux server and classifies them as Needs attention, Running, Unknown, or Stale.
+It discovers Codex and Claude Code panes across the current tmux server and classifies them as Needs attention, Running, or Stale.
 
 ## Current capabilities
 
@@ -13,14 +13,12 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Marks supported approvals and questions as Needs attention.
 - Changes a Running Agent that finishes in the background to Needs attention, while a selected completion becomes Stale.
 - Changes a Reviewable result to Stale after its pane is selected. Selecting an Input request acknowledges it temporarily; it returns to Needs attention if the user leaves without responding.
-- Marks a first-discovered background idle Agent as Unknown and a selected idle Agent as Stale.
-- Changes an Unknown idle Agent to Stale after it is selected and scanned.
-- Keeps unsupported or ambiguous Agent screens Unknown instead of guessing their state.
+- Marks idle, unsupported, and ambiguous Agent screens as Stale when no Running or Needs attention signal is detected.
 - Stores Agent metadata on the pane, so no runtime state files are created.
-- Keeps five numeric count options available, including zero values.
+- Keeps four numeric count options available, including zero values.
 - Refreshes status-driven scans asynchronously, retaining the previous widget while the next scan runs.
-- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, a conditional yellow Unknown count, and a muted Stale count.
-- Opens an fzf Agent chooser with prefix + <kbd>A</kbd>. The chooser groups Agents by Needs attention, Stale, Unknown, then Running; shows pane context and state age; previews the highlighted pane's current screen; and can switch the invoking client across sessions.
+- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, and a muted Stale count.
+- Opens an fzf Agent chooser with prefix + <kbd>A</kbd>. The chooser groups Agents by Needs attention, Stale, then Running; shows pane context and state age; previews the highlighted pane's current screen; and can switch the invoking client across sessions.
 - Jumps directly to the longest-waiting Agent that Needs attention with prefix + <kbd>a</kbd>.
 
 ## Requirements
@@ -62,20 +60,20 @@ Reload `tmux.conf` to start tracking Agents. The plugin replaces only the placeh
 
 ## Customize the status widget
 
-The default `#{tmux_agents}` widget shows the robot icon, followed by Needs attention, Running, Unknown, and Stale. Needs attention, Running, and Unknown disappear when their count is zero; Stale remains visible so the widget has a stable presence.
+The default `#{tmux_agents}` widget shows the robot icon, followed by Needs attention, Running, and Stale. Needs attention and Running disappear when their count is zero; Stale remains visible so the widget has a stable presence.
 
 For custom styling, add the zero-width `#{tmux_agents_scan}` trigger and render any of the public count options yourself. The trigger refreshes the counts asynchronously without adding text:
 
 ```tmux
 set -g status-interval 2
-set -ag status-right ' #{tmux_agents_scan}A:#{@tmux_agents_count_attention} R:#{@tmux_agents_count_running} U:#{@tmux_agents_count_unknown} S:#{@tmux_agents_count_stale}'
+set -ag status-right ' #{tmux_agents_scan}A:#{@tmux_agents_count_attention} R:#{@tmux_agents_count_running} S:#{@tmux_agents_count_stale}'
 ```
 
 Set either placeholder before the plugin entry point runs. The plugin does not add a placeholder or change `status-left` or `status-right` on its own.
 
 ## Browse Agents
 
-Press prefix + <kbd>A</kbd> to open the Agent chooser. It appears immediately with a loading row while it performs a fresh Agent scan. Needs attention Agents then appear first, with the longest-waiting request at the top. Stale, Unknown, and Running Agents follow. Typing uses normal fzf relevance sorting.
+Press prefix + <kbd>A</kbd> to open the Agent chooser. It appears immediately with a loading row while it performs a fresh Agent scan. Needs attention Agents then appear first, with the longest-waiting request at the top. Stale and Running Agents follow. Typing uses normal fzf relevance sorting.
 
 Each entry shows its state, Agent type, tmux location, working directory, and state age. A useful Agent title appears on a separate first line. The right-side preview reads only the highlighted pane's current visible screen and preserves its colors and text attributes.
 
@@ -103,15 +101,14 @@ The following global tmux user options always contain numeric values:
 
 - `@tmux_agents_count_attention`
 - `@tmux_agents_count_running`
-- `@tmux_agents_count_unknown`
 - `@tmux_agents_count_stale`
 - `@tmux_agents_count_total`
 
-All five options reflect each completed scan. The four state counts are mutually exclusive and sum to the total.
+All four options reflect each completed scan. The three state counts are mutually exclusive and sum to the total.
 
 ## Detection and privacy limits
 
-- Detection recognizes the current English Codex and Claude Code TUI layouts. Agents using customized, translated, or newly changed layouts may be classified as Unknown until their screen signatures are supported.
+- Detection recognizes the current English Codex and Claude Code TUI layouts. Agents using customized, translated, or newly changed layouts are treated as Stale unless a Running or Needs attention signal is recognized.
 - Only panes whose direct foreground command is `codex` or `claude` are discovered. Wrapper processes are not followed.
 - Discovery covers every pane in the current tmux server, but does not cross into a separate tmux socket server, remote host, or nested tmux instance.
 - Classification is passive screen inference. tmux-agents does not configure lifecycle hooks, terminal bells, or either Agent CLI.

@@ -45,11 +45,10 @@ plugin_option_is() {
 state_counts_sum_to_total() {
   attention=$(plugin_option '@tmux_agents_count_attention')
   running=$(plugin_option '@tmux_agents_count_running')
-  unknown=$(plugin_option '@tmux_agents_count_unknown')
   stale=$(plugin_option '@tmux_agents_count_stale')
   total=$(plugin_option '@tmux_agents_count_total')
 
-  [ "$((attention + running + unknown + stale))" -eq "$total" ]
+  [ "$((attention + running + stale))" -eq "$total" ]
 }
 
 all_runtime_options() {
@@ -338,7 +337,6 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -gv status-right)" = 'right-side' ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
 }
@@ -354,11 +352,10 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'stale' ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
-  retry_until 100 status_right_contains '󰚩 #[fg=colour220]1 #[fg=colour244]1'
-  [ "$(tmux_test show-options -pqv -t agents:background.0 '@tmux_agents_state')" = 'unknown' ]
+  retry_until 100 status_right_contains '󰚩 2'
+  [ "$(tmux_test show-options -pqv -t agents:background.0 '@tmux_agents_state')" = 'stale' ]
 
   runtime_options=$(all_runtime_options agents:0.0)
   case "$runtime_options" in
@@ -372,8 +369,7 @@ show_unsupported_agent() {
   load_plugin agents:0.1
 
   [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'stale' ]
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
 }
 
@@ -391,7 +387,7 @@ show_unsupported_agent() {
 
   load_plugin agents:0.0
 
-  pane_state_is agents:0.0 unknown
+  pane_state_is agents:0.0 stale
   runtime_options=$(all_runtime_options agents:0.0)
   case "$runtime_options" in
     *"$scrollback_marker"*|*'Visible output has no supported evidence.'*) false ;;
@@ -399,17 +395,16 @@ show_unsupported_agent() {
   [ -z "$(find "$BATS_TEST_TMPDIR" -type f ! -path "$test_bin/*" -print -quit)" ]
 }
 
-@test "a first-discovered background idle Codex Agent is Unknown" {
+@test "a first-discovered background idle Codex Agent is Stale" {
   tmux_test new-window -d -t agents: -n background
   show_idle_codex agents:background.0
 
   load_plugin agents:0.0
 
-  [ "$(tmux_test show-options -pv -t agents:background.0 '@tmux_agents_state')" = 'unknown' ]
+  [ "$(tmux_test show-options -pv -t agents:background.0 '@tmux_agents_state')" = 'stale' ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
@@ -428,7 +423,6 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -pv -t other:0.0 '@tmux_agents_state')" = 'running' ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '2' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
 }
@@ -442,7 +436,6 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 
@@ -498,7 +491,6 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 
@@ -630,16 +622,15 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" != '1' ]
 }
 
-@test "an unsupported Agent screen is Unknown" {
+@test "an unsupported Agent screen is Stale" {
   show_unsupported_agent agents:0.0 codex
 
   load_plugin agents:0.0
 
   [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_type')" = 'codex' ]
-  [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'unknown' ]
+  [ "$(tmux_test show-options -pv -t agents:0.0 '@tmux_agents_state')" = 'stale' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
@@ -653,28 +644,12 @@ show_unsupported_agent() {
 
   [ "$(tmux_test show-options -pv -t agents:codex-agent.0 '@tmux_agents_type')" = 'codex' ]
   [ "$(tmux_test show-options -pv -t other:0.0 '@tmux_agents_type')" = 'claude' ]
-  [ "$(tmux_test show-options -pv -t agents:codex-agent.0 '@tmux_agents_state')" = 'unknown' ]
-  [ "$(tmux_test show-options -pv -t other:0.0 '@tmux_agents_state')" = 'unknown' ]
+  [ "$(tmux_test show-options -pv -t agents:codex-agent.0 '@tmux_agents_state')" = 'stale' ]
+  [ "$(tmux_test show-options -pv -t other:0.0 '@tmux_agents_state')" = 'stale' ]
   [ -z "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_type')" ]
   [ -z "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_state')" ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '2' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
-}
-
-@test "selecting an Unknown idle Agent acknowledges it as Stale" {
-  tmux_test new-window -d -t agents: -n background
-  show_idle_codex agents:background.0
-  load_plugin agents:0.0
-
-  [ "$(tmux_test show-options -pv -t agents:background.0 '@tmux_agents_state')" = 'unknown' ]
-
-  tmux_test select-window -t agents:background
-  load_plugin agents:background.0
-
-  [ "$(tmux_test show-options -pv -t agents:background.0 '@tmux_agents_state')" = 'stale' ]
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
-  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
 @test "closing an Agent pane removes it from the counts" {
@@ -682,39 +657,27 @@ show_unsupported_agent() {
   show_idle_claude agents:background.0
   load_plugin agents:0.0
 
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 
   tmux_test kill-pane -t agents:background.0
   load_plugin agents:0.0
 
-  [ "$(plugin_option '@tmux_agents_count_unknown')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
 }
 
-@test "the default widget shows nonzero Unknown before Stale" {
-  tmux_test new-window -d -t agents: -n background
-  show_idle_codex agents:background.0
-  show_idle_claude agents:0.0
-  tmux_test set-option -g status-right '#{tmux_agents}'
-
-  load_plugin agents:0.0
-
-  retry_until 100 status_right_contains '#[fg=colour220]1 #[fg=colour244]1'
-}
-
-@test "the default widget shows nonzero Running in green before Unknown and Stale" {
+@test "the default widget shows nonzero Running in green before Stale" {
   tmux_test new-window -d -t agents: -n running
-  tmux_test new-window -d -t agents: -n unknown
+  tmux_test new-window -d -t agents: -n unsupported
   show_running_codex agents:running.0
-  show_unsupported_agent agents:unknown.0 claude
+  show_unsupported_agent agents:unsupported.0 claude
   show_idle_codex agents:0.0
   tmux_test set-option -g status-right '#{tmux_agents}'
 
   load_plugin agents:0.0
 
-  retry_until 100 status_right_contains '#[fg=colour40]1 #[fg=colour220]1 #[fg=colour244]1'
+  retry_until 100 status_right_contains '#[fg=colour40]1 #[fg=colour244]2'
 }
 
 @test "the default widget shows nonzero Needs attention first in an orange pill" {
@@ -791,7 +754,7 @@ show_unsupported_agent() {
   tmux_test refresh-client -t "$status_client_name" -S
 
   retry_until 100 plugin_option_is '@tmux_agents_count_running' 0
-  retry_until 100 plugin_option_is '@tmux_agents_count_unknown' 1
+  retry_until 100 plugin_option_is '@tmux_agents_count_stale' 1
   retry_until 100 status_right_contains 'Agents: 0'
 }
 
@@ -799,12 +762,12 @@ show_unsupported_agent() {
   tmux_test new-window -d -t agents: -n older-attention
   tmux_test new-window -d -t agents: -n newer-attention
   tmux_test new-window -d -t agents: -n stale
-  tmux_test new-window -d -t agents: -n unknown
+  tmux_test new-window -d -t agents: -n another-stale
   tmux_test new-window -d -t agents: -n running
   show_codex_approval agents:older-attention.0
   show_claude_approval agents:newer-attention.0
   show_idle_claude agents:stale.0
-  show_idle_codex agents:unknown.0
+  show_idle_codex agents:another-stale.0
   show_running_claude agents:running.0
 
   tmux_test select-window -t agents:stale
@@ -817,13 +780,13 @@ show_unsupported_agent() {
   tmux_test select-pane -t agents:older-attention.0 -T 'Old review'
   tmux_test select-pane -t agents:newer-attention.0 -T 'New approval'
   tmux_test select-pane -t agents:stale.0 -T 'claude'
-  tmux_test select-pane -t agents:unknown.0 -T ''
+  tmux_test select-pane -t agents:another-stale.0 -T ''
   tmux_test select-pane -t agents:running.0 -T 'Index the docs'
 
   older_id=$(tmux_test display-message -p -t agents:older-attention.0 '#{pane_id}')
   newer_id=$(tmux_test display-message -p -t agents:newer-attention.0 '#{pane_id}')
   stale_id=$(tmux_test display-message -p -t agents:stale.0 '#{pane_id}')
-  unknown_id=$(tmux_test display-message -p -t agents:unknown.0 '#{pane_id}')
+  another_stale_id=$(tmux_test display-message -p -t agents:another-stale.0 '#{pane_id}')
   running_id=$(tmux_test display-message -p -t agents:running.0 '#{pane_id}')
 
   enable_fzf_stub
@@ -832,7 +795,7 @@ show_unsupported_agent() {
   open_chooser
 
   expected_order=$(printf '%s\n' \
-    "$older_id" "$newer_id" "$stale_id" "$unknown_id" "$running_id")
+    "$older_id" "$newer_id" "$stale_id" "$another_stale_id" "$running_id")
   actual_order=$(cut -f1 "$chooser_input")
   [ "$actual_order" = "$expected_order" ]
 
@@ -845,7 +808,7 @@ show_unsupported_agent() {
     *"$stale_id	claude |"*) false ;;
   esac
   case "$chooser_items" in
-    *"$unknown_id	Unknown · Codex · agents:unknown.0 · "*) ;;
+    *"$another_stale_id	Stale · Codex · agents:another-stale.0 · "*) ;;
     *) false ;;
   esac
   case "$chooser_items" in
@@ -931,7 +894,7 @@ show_unsupported_agent() {
   load_plugin agents:0.0
 
   target_id=$(tmux_test display-message -p -t other:target.0 '#{pane_id}')
-  [ "$(tmux_test show-options -pv -t "$target_id" '@tmux_agents_state')" = 'unknown' ]
+  [ "$(tmux_test show-options -pv -t "$target_id" '@tmux_agents_state')" = 'stale' ]
 
   enable_fzf_stub
   enable_slow_post_selection_scan

@@ -17,7 +17,6 @@ state_label() {
   case "$1" in
   attention) printf '%s' 'Needs attention' ;;
   stale) printf '%s' 'Stale' ;;
-  unknown) printf '%s' 'Unknown' ;;
   running) printf '%s' 'Running' ;;
   esac
 }
@@ -33,8 +32,7 @@ state_rank() {
   case "$1" in
   attention) printf '%s' 0 ;;
   stale) printf '%s' 1 ;;
-  unknown) printf '%s' 2 ;;
-  running) printf '%s' 3 ;;
+  running) printf '%s' 2 ;;
   esac
 }
 
@@ -99,7 +97,7 @@ ordered_agent_ids() {
   while IFS= read -r pane_id; do
     pane_state=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state')
     case "$pane_state" in
-    attention | stale | unknown | running) ;;
+    attention | stale | running) ;;
     *) continue ;;
     esac
 
