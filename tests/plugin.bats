@@ -456,6 +456,30 @@ show_unsupported_agent() {
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
+@test "passive Agent state records source and evidence without screen text" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+  pane_id=$(tmux_test display-message -p -t agents:input.0 '#{pane_id}')
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_state_source')" = 'passive' ]
+  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_evidence')" = 'input' ]
+  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_state_since')" -gt 0 ]
+  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_attention_evidence')" = 'input' ]
+  [ -n "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')" ]
+  [ -z "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_acknowledged_signature')" ]
+
+  load_plugin agents:input.0
+
+  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_acknowledged_signature')" = \
+    "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')" ]
+  runtime_options=$(all_runtime_options agents:input.0)
+  case "$runtime_options" in
+    *'Would you like to run the following command?'*|*'git status --short'*) false ;;
+  esac
+}
+
 @test "a supported Codex question Needs attention" {
   tmux_test new-window -d -t agents: -n input
   show_codex_question agents:input.0

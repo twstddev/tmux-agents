@@ -3,89 +3,13 @@
 set -e
 
 selected_pane=$1
-attention_count=0
-running_count=0
-stale_count=0
-total_count=0
+plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-clear_attention_event() {
-  pane_id_to_clear=$1
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=state.sh
+. "$plugin_root/scripts/state.sh"
 
-  tmux set-option -puq -t "$pane_id_to_clear" '@tmux_agents_attention_evidence' 2>/dev/null || true
-  tmux set-option -puq -t "$pane_id_to_clear" '@tmux_agents_attention_signature' 2>/dev/null || true
-  tmux set-option -puq -t "$pane_id_to_clear" '@tmux_agents_acknowledged_signature' 2>/dev/null || true
-}
-
-set_attention_event() {
-  pane_id_to_set=$1
-  attention_evidence_to_set=$2
-  attention_signature_to_set=$3
-  acknowledged_signature_to_set=${4-}
-
-  tmux set-option -pq -t "$pane_id_to_set" '@tmux_agents_attention_evidence' "$attention_evidence_to_set"
-  tmux set-option -pq -t "$pane_id_to_set" '@tmux_agents_attention_signature' "$attention_signature_to_set"
-  if [ -n "$acknowledged_signature_to_set" ]; then
-    tmux set-option -pq -t "$pane_id_to_set" '@tmux_agents_acknowledged_signature' "$acknowledged_signature_to_set"
-  else
-    tmux set-option -puq -t "$pane_id_to_set" '@tmux_agents_acknowledged_signature' 2>/dev/null || true
-  fi
-}
-
-clear_agent_state() {
-  pane_id_to_clear=$1
-
-  tmux set-option -puq -t "$pane_id_to_clear" '@tmux_agents_type' 2>/dev/null || true
-  tmux set-option -puq -t "$pane_id_to_clear" '@tmux_agents_state' 2>/dev/null || true
-  tmux set-option -puq -t "$pane_id_to_clear" '@tmux_agents_state_since' 2>/dev/null || true
-  clear_attention_event "$pane_id_to_clear"
-}
-
-starts_new_wait() {
-  next_state=$1
-  next_attention_signature=$2
-  next_acknowledged_signature=$3
-
-  if [ "$pane_state" != "$next_state" ]; then
-    return 0
-  fi
-  if [ "$next_state" != 'attention' ] || [ -z "$next_attention_signature" ]; then
-    return 1
-  fi
-  if [ "$pane_attention_signature" != "$next_attention_signature" ]; then
-    return 0
-  fi
-
-  [ -z "$next_acknowledged_signature" ] &&
-    [ "$pane_acknowledged_signature" = "$next_attention_signature" ]
-}
-
-set_agent_state() {
-  pane_id_to_set=$1
-  agent_type_to_set=$2
-  state_to_set=$3
-  attention_evidence_to_set=${4-}
-  attention_signature_to_set=${5-}
-  acknowledged_signature_to_set=${6-}
-
-  tmux set-option -pq -t "$pane_id_to_set" '@tmux_agents_type' "$agent_type_to_set"
-  if starts_new_wait "$state_to_set" "$attention_signature_to_set" \
-    "$acknowledged_signature_to_set"; then
-    tmux set-option -pq -t "$pane_id_to_set" '@tmux_agents_state_since' "$(date +%s)"
-  fi
-
-  if [ -n "$attention_evidence_to_set" ] && [ -n "$attention_signature_to_set" ]; then
-    set_attention_event "$pane_id_to_set" "$attention_evidence_to_set" \
-      "$attention_signature_to_set" "$acknowledged_signature_to_set"
-  else
-    clear_attention_event "$pane_id_to_set"
-  fi
-
-  tmux set-option -pq -t "$pane_id_to_set" '@tmux_agents_state' "$state_to_set"
-  pane_state=$state_to_set
-  pane_attention_evidence=$attention_evidence_to_set
-  pane_attention_signature=$attention_signature_to_set
-  pane_acknowledged_signature=$acknowledged_signature_to_set
-}
+state_begin_reconciliation
 
 screen_shows_running() {
   agent_type_to_check=$1
@@ -163,7 +87,7 @@ while IFS='|' read -r pane_id pane_command; do
     codex) prompt_marker='›' ;;
     claude) prompt_marker='❯' ;;
     *)
-      clear_agent_state "$pane_id"
+      state_apply_event remove "$pane_id"
       continue
       ;;
   esac
@@ -172,13 +96,15 @@ while IFS='|' read -r pane_id pane_command; do
   current_screen_signature=$(printf '%s\n' "$current_screen" | cksum | awk '{ print $1 ":" $2 }')
   if printf '%s\n' "$current_screen" | screen_shows_input_request "$pane_command"; then
     if [ "$pane_id" = "$selected_pane" ]; then
-      set_agent_state "$pane_id" "$pane_command" 'attention' 'input' \
-        "$current_screen_signature" "$current_screen_signature"
+      state_apply_event acknowledge "$pane_id" "$pane_command" 'attention' 'input' \
+        "$current_screen_signature" 'passive' '' 'input'
     else
-      set_agent_state "$pane_id" "$pane_command" 'attention' 'input' "$current_screen_signature"
+      state_apply_event transition "$pane_id" "$pane_command" 'attention' 'input' \
+        "$current_screen_signature" '' 'passive' '' 'input'
     fi
   elif printf '%s\n' "$current_screen" | screen_shows_running "$pane_command"; then
-    set_agent_state "$pane_id" "$pane_command" 'running'
+    state_apply_event transition "$pane_id" "$pane_command" 'running' '' '' '' \
+      'passive' '' 'running'
   elif printf '%s\n' "$current_screen" | awk -v prompt_marker="$prompt_marker" '
     $0 ~ "^[[:space:]]*" prompt_marker { prompt_line = NR }
     /[^[:space:]]/ { last_nonblank_line = NR }
@@ -190,35 +116,31 @@ while IFS='|' read -r pane_id pane_command; do
   '; then
     if [ "$pane_id" = "$selected_pane" ]; then
       if [ "$pane_state" = 'running' ] || [ "$pane_attention_evidence" = 'result' ]; then
-        set_agent_state "$pane_id" "$pane_command" 'stale' 'result' \
-          "$current_screen_signature" "$current_screen_signature"
+        state_apply_event acknowledge "$pane_id" "$pane_command" 'stale' 'result' \
+          "$current_screen_signature" 'passive' '' 'result'
       else
-        set_agent_state "$pane_id" "$pane_command" 'stale'
+        state_apply_event transition "$pane_id" "$pane_command" 'stale' '' '' '' \
+          'passive' '' 'idle'
       fi
     elif [ "$pane_state" = 'running' ]; then
-      set_agent_state "$pane_id" "$pane_command" 'attention' 'result' "$current_screen_signature"
+      state_apply_event transition "$pane_id" "$pane_command" 'attention' 'result' \
+        "$current_screen_signature" '' 'passive' '' 'result'
     elif [ "$pane_attention_evidence" = 'input' ] &&
       [ "$pane_attention_signature" != "$current_screen_signature" ]; then
-      set_agent_state "$pane_id" "$pane_command" 'attention' 'result' "$current_screen_signature"
+      state_apply_event transition "$pane_id" "$pane_command" 'attention' 'result' \
+        "$current_screen_signature" '' 'passive' '' 'result'
     elif [ -z "$pane_state" ]; then
-      set_agent_state "$pane_id" "$pane_command" 'stale'
+      state_apply_event transition "$pane_id" "$pane_command" 'stale' '' '' '' \
+        'passive' '' 'idle'
     else
-      tmux set-option -pq -t "$pane_id" '@tmux_agents_type' "$pane_command"
+      state_apply_event transition "$pane_id" "$pane_command" "$pane_state" \
+        "$pane_attention_evidence" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" 'passive' '' 'idle'
     fi
   else
-    set_agent_state "$pane_id" "$pane_command" 'stale'
+    state_apply_event transition "$pane_id" "$pane_command" 'stale' '' '' '' \
+      'passive' '' 'unmatched-screen'
   fi
-
-  case "$pane_state" in
-    attention) attention_count=$((attention_count + 1)) ;;
-    running) running_count=$((running_count + 1)) ;;
-    stale) stale_count=$((stale_count + 1)) ;;
-    *) continue ;;
-  esac
-  total_count=$((total_count + 1))
 done < <(tmux list-panes -a -F '#{pane_id}|#{pane_current_command}')
 
-tmux set-option -gq '@tmux_agents_count_attention' "$attention_count"
-tmux set-option -gq '@tmux_agents_count_running' "$running_count"
-tmux set-option -gq '@tmux_agents_count_stale' "$stale_count"
-tmux set-option -gq '@tmux_agents_count_total' "$total_count"
+state_end_reconciliation
