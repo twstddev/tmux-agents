@@ -4,6 +4,7 @@ set -e
 
 selected_pane=$1
 plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+tmux_agents_debug_scanning=1
 
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=state.sh
@@ -82,6 +83,8 @@ while IFS='|' read -r pane_id pane_command; do
   pane_attention_evidence=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_attention_evidence')
   pane_attention_signature=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')
   pane_acknowledged_signature=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_acknowledged_signature')
+  pane_state_source=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state_source')
+  pane_identity=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_identity')
 
   case "$pane_command" in
     codex) prompt_marker='›' ;;
@@ -92,8 +95,41 @@ while IFS='|' read -r pane_id pane_command; do
       ;;
   esac
 
+  if [ "$pane_state_source" = 'hook' ]; then
+    if [ "$pane_state" = 'attention' ]; then
+      if [ "$pane_id" = "$selected_pane" ]; then
+        case "$pane_attention_evidence" in
+        input)
+          state_apply_event acknowledge "$pane_id" "$pane_command" 'attention' 'input' \
+            "$pane_attention_signature" 'hook' "$pane_identity" 'input'
+          ;;
+        result)
+          state_apply_event acknowledge "$pane_id" "$pane_command" 'stale' 'result' \
+            "$pane_attention_signature" 'hook' "$pane_identity" 'result'
+          ;;
+        esac
+      elif [ "$pane_attention_evidence" = 'input' ] &&
+        [ "$pane_acknowledged_signature" = "$pane_attention_signature" ]; then
+        state_apply_event transition "$pane_id" "$pane_command" 'attention' 'input' \
+          "$pane_attention_signature" '' 'hook' "$pane_identity" 'input'
+      fi
+    fi
+
+    if [ "$pane_state" = 'attention' ] &&
+      [ "$pane_attention_evidence" = 'input' ] &&
+      [ "$pane_acknowledged_signature" = "$pane_attention_signature" ]; then
+      current_screen=$(tmux capture-pane -p -t "$pane_id")
+      if printf '%s\n' "$current_screen" | screen_shows_running "$pane_command"; then
+        state_apply_event transition "$pane_id" "$pane_command" 'running' '' '' '' \
+          'hook' "$pane_identity" 'running-screen'
+      fi
+    fi
+    continue
+  fi
+
   current_screen=$(tmux capture-pane -p -t "$pane_id")
   current_screen_signature=$(printf '%s\n' "$current_screen" | cksum | awk '{ print $1 ":" $2 }')
+
   if printf '%s\n' "$current_screen" | screen_shows_input_request "$pane_command"; then
     if [ "$pane_id" = "$selected_pane" ]; then
       state_apply_event acknowledge "$pane_id" "$pane_command" 'attention' 'input' \

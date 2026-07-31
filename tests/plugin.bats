@@ -326,6 +326,27 @@ show_unsupported_agent() {
   retry_until 50 pane_current_command_is "$target" "$agent_type"
 }
 
+send_hook_event() {
+  target=$1
+  agent_type=$2
+  event_name=$3
+  session_id=$4
+  turn_id=${5:-turn-1}
+  pane_id=$(tmux_test display-message -p -t "$target" '#{pane_id}')
+  server_pid=$(tmux_test display-message -p -t "$target" '#{pid}')
+
+  if [ -n "${TMUX_AGENTS_TEST_REFRESH_COUNT-}" ] ||
+    [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ]; then
+    printf '%s\n' "{\"session_id\":\"$session_id\",\"turn_id\":\"$turn_id\"}" |
+      PATH="$test_bin:$PATH" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$pane_id" \
+        "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
+  else
+    printf '%s\n' "{\"session_id\":\"$session_id\",\"turn_id\":\"$turn_id\"}" |
+      TMUX="$socket_path,$server_pid,0" TMUX_PANE="$pane_id" \
+        "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
+  fi
+}
+
 @test "loading the plugin is idempotent and leaves status placement alone" {
   tmux_test set-option -g status-left 'left-side'
   tmux_test set-option -g status-right 'right-side'
@@ -339,6 +360,197 @@ show_unsupported_agent() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "a session-start hook registers a standalone Codex Agent as Stale" {
+  load_plugin
+
+  send_hook_event agents:0.0 codex start codex-session-1
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "lifecycle hooks move an Agent through Running, Input, Reviewable, and removal" {
+  load_plugin
+
+  send_hook_event agents:0.0 claude start claude-session-1
+  send_hook_event agents:0.0 claude running claude-session-1
+
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+
+  send_hook_event agents:0.0 claude input claude-session-1 turn-2
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+
+  send_hook_event agents:0.0 claude result claude-session-1 turn-3
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+
+  send_hook_event agents:0.0 claude end claude-session-1
+
+  [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "a changed hook session starts fresh state and stale end events are ignored" {
+  load_plugin
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex running codex-session-1
+
+  send_hook_event agents:0.0 codex start codex-session-2
+  send_hook_event agents:0.0 codex running codex-session-1
+  send_hook_event agents:0.0 codex end codex-session-1
+
+  [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "an unassociated hook end event does not remove a passively tracked Agent" {
+  show_idle_codex agents:0.0
+  load_plugin
+
+  send_hook_event agents:0.0 codex end codex-session-1
+
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "a hook state is not replaced by unmatched screen output" {
+  show_idle_codex agents:0.0
+  load_plugin
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex running codex-session-1
+
+  load_plugin agents:0.0
+
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+}
+
+@test "visible Running evidence advances an acknowledged hook Input request" {
+  show_codex_approval agents:0.0
+  load_plugin
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex input codex-session-1 turn-2
+
+  load_plugin agents:0.0
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+
+  show_running_codex agents:0.0
+  load_plugin agents:0.0
+
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+}
+
+@test "selecting a hook-reported Reviewable result acknowledges it as Stale" {
+  show_idle_claude agents:0.0
+  load_plugin
+  send_hook_event agents:0.0 claude start claude-session-1
+  send_hook_event agents:0.0 claude result claude-session-1 turn-2
+
+  load_plugin agents:0.0
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+}
+
+@test "a hook event refreshes a connected status client without waiting for status interval" {
+  show_idle_codex agents:0.0
+  tmux_test set-option -g status-right '#{tmux_agents}'
+  load_plugin
+  attach_status_client
+
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex running codex-session-1
+
+  retry_until 20 status_right_contains '#[fg=colour40]1 #[fg=colour244]0'
+}
+
+@test "a hook refresh does not trigger another client refresh through status rendering" {
+  show_idle_codex agents:0.0
+  tmux_test set-option -g status-right '#{tmux_agents}'
+  refresh_count="$BATS_TEST_TMPDIR/refresh-count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_REFRESH_COUNT="$refresh_count"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REFRESH_COUNT "$refresh_count"
+  load_plugin
+  attach_status_client
+  printf '%s\n' 0 >"$refresh_count"
+
+  send_hook_event agents:0.0 codex running codex-session-1
+  sleep 0.2
+
+  [ "$(<"$refresh_count")" = '1' ]
+}
+
+@test "an ordinary scan does not capture a hook-reported Agent screen" {
+  show_idle_codex agents:0.0
+  capture_count="$BATS_TEST_TMPDIR/capture-count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_CAPTURE_COUNT="$capture_count"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_CAPTURE_COUNT "$capture_count"
+  load_plugin
+  printf '%s\n' 0 >"$capture_count"
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex running codex-session-1
+
+  load_plugin agents:0.0
+
+  [ "$(<"$capture_count")" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+}
+
+@test "an unchanged hook Agent scan does not redraw status options" {
+  show_idle_codex agents:0.0
+  set_option_count="$BATS_TEST_TMPDIR/set-option-count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_SET_OPTION_COUNT="$set_option_count"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_SET_OPTION_COUNT "$set_option_count"
+  load_plugin
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex running codex-session-1
+  printf '%s\n' 0 >"$set_option_count"
+
+  load_plugin agents:0.0
+
+  [ "$(<"$set_option_count")" = '0' ]
+}
+
+@test "a hook outside tmux exits without changing state" {
+  load_plugin
+
+  run bash -c "printf '%s\\n' '{\"session_id\":\"codex-session-1\"}' | '$project_root/scripts/hook.sh' codex start"
+
+  [ "$status" -eq 0 ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "debug tracing records scan facts without screen text" {
+  show_idle_codex agents:0.0
+  tmux_test set-option -g '@tmux_agents_debug' 1
+  load_plugin
+
+  send_hook_event agents:0.0 codex start codex-session-1
+
+  debug_messages=$(tmux_test show-messages)
+  case "$debug_messages" in
+    *'tmux-agents debug: transition'*'new=stale'*) ;;
+    *) false ;;
+  esac
+  case "$debug_messages" in
+    *'tmux-agents debug: hook event='*|*'tmux-agents debug: scan pane='*) false ;;
+  esac
+  case "$debug_messages" in
+    *'Ask Codex to do anything'*|*'100% left'*) false ;;
+  esac
 }
 
 @test "a selected idle Codex Agent is Stale and counted" {
@@ -1018,7 +1230,7 @@ show_unsupported_agent() {
 
   retry_until 100 client_target_is "$status_client_name" "$newer_location"
   retry_until 100 pane_state_is "$newer_id" stale
-  plugin_option_is '@tmux_agents_count_attention' 0
+  retry_until 100 plugin_option_is '@tmux_agents_count_attention' 0
 }
 
 @test "an unresolved Input request returns to the direct-jump queue after leaving" {

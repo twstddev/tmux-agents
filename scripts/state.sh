@@ -2,6 +2,18 @@
 
 # Shared pane-state boundary. Callers supply event evidence, never screen text.
 
+state_debug() {
+  state_debug_message=$1
+
+  [ "${tmux_agents_debug_scanning:-0}" = '1' ] || return 0
+  if [ -z "${tmux_agents_debug_enabled+x}" ]; then
+    tmux_agents_debug_enabled=$(tmux show-options -gqv '@tmux_agents_debug' || true)
+  fi
+  [ "$tmux_agents_debug_enabled" = '1' ] || return 0
+  tmux display-message -d 0 "tmux-agents debug: $state_debug_message" \
+    2>/dev/null || true
+}
+
 state_clear_attention_event() {
   state_pane_id=$1
 
@@ -12,6 +24,12 @@ state_clear_attention_event() {
 
 state_remove_agent() {
   state_pane_id=$1
+  state_existing_type=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_type')
+  state_existing_state=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_state')
+
+  if [ -n "$state_existing_type" ] || [ -n "$state_existing_state" ]; then
+    state_debug "remove pane=$state_pane_id"
+  fi
 
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_type' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_identity' 2>/dev/null || true
@@ -58,6 +76,11 @@ state_transition_agent() {
   previous_attention_signature=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_attention_signature')
   previous_acknowledged_signature=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_acknowledged_signature')
   previous_identity=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_identity')
+
+  if [ "$previous_state" != "$state_next" ] ||
+    { [ -n "$state_identity" ] && [ "$previous_identity" != "$state_identity" ]; }; then
+    state_debug "transition pane=$state_pane_id type=$state_agent_type source=$state_source identity=$state_identity old=$previous_state new=$state_next evidence=$state_evidence"
+  fi
 
   if [ -n "$state_identity" ] && [ -n "$previous_identity" ] &&
     [ "$state_identity" != "$previous_identity" ]; then
@@ -143,10 +166,20 @@ state_refresh_counts() {
     state_total_count=$((state_total_count + 1))
   done < <(tmux list-panes -a -F '#{pane_id}')
 
-  tmux set-option -gq '@tmux_agents_count_attention' "$state_attention_count"
-  tmux set-option -gq '@tmux_agents_count_running' "$state_running_count"
-  tmux set-option -gq '@tmux_agents_count_stale' "$state_stale_count"
-  tmux set-option -gq '@tmux_agents_count_total' "$state_total_count"
+  state_set_global_option '@tmux_agents_count_attention' "$state_attention_count"
+  state_set_global_option '@tmux_agents_count_running' "$state_running_count"
+  state_set_global_option '@tmux_agents_count_stale' "$state_stale_count"
+  state_set_global_option '@tmux_agents_count_total' "$state_total_count"
+}
+
+state_set_global_option() {
+  state_option_name=$1
+  state_option_value=$2
+
+  if [ "$(tmux show-options -gqv "$state_option_name")" != "$state_option_value" ]; then
+    tmux set-option -gq "$state_option_name" "$state_option_value"
+    state_debug "set-option name=$state_option_name"
+  fi
 }
 
 state_render_status() {
@@ -167,7 +200,7 @@ state_render_status() {
     state_status_value="$state_status_value $state_stale_count#[default]"
   fi
 
-  tmux set-option -gq '@tmux_agents_status' "$state_status_value"
+  state_set_global_option '@tmux_agents_status' "$state_status_value"
 }
 
 state_refresh() {

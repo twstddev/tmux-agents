@@ -25,4 +25,31 @@ if [ -n "${TMUX_AGENTS_TEST_POST_SWITCH-}" ] &&
   sleep "${TMUX_AGENTS_TEST_SCAN_DELAY:-1}"
 fi
 
+if [ -n "${TMUX_AGENTS_TEST_REFRESH_COUNT-}" ] &&
+  [ "${1-}" = 'refresh-client' ]; then
+  refresh_count=0
+  if [ -f "$TMUX_AGENTS_TEST_REFRESH_COUNT" ]; then
+    refresh_count=$(<"$TMUX_AGENTS_TEST_REFRESH_COUNT")
+  fi
+  printf '%s\n' "$((refresh_count + 1))" >"$TMUX_AGENTS_TEST_REFRESH_COUNT"
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_CAPTURE_COUNT-}" ] &&
+  [ "${1-}" = 'capture-pane' ]; then
+  capture_count=0
+  if [ -f "$TMUX_AGENTS_TEST_CAPTURE_COUNT" ]; then
+    capture_count=$(<"$TMUX_AGENTS_TEST_CAPTURE_COUNT")
+  fi
+  printf '%s\n' "$((capture_count + 1))" >"$TMUX_AGENTS_TEST_CAPTURE_COUNT"
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ] &&
+  [ "${1-}" = 'set-option' ]; then
+  set_option_count=0
+  if [ -f "$TMUX_AGENTS_TEST_SET_OPTION_COUNT" ]; then
+    set_option_count=$(<"$TMUX_AGENTS_TEST_SET_OPTION_COUNT")
+  fi
+  printf '%s\n' "$((set_option_count + 1))" >"$TMUX_AGENTS_TEST_SET_OPTION_COUNT"
+fi
+
 exec "$TMUX_AGENTS_TEST_REAL_TMUX" "$@"

@@ -14,6 +14,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Changes a Running Agent that finishes in the background to Needs attention, while a selected completion becomes Stale.
 - Changes a Reviewable result to Stale after its pane is selected. Selecting an Input request acknowledges it temporarily; it returns to Needs attention if the user leaves without responding.
 - Marks idle, unsupported, and ambiguous Agent screens as Stale when no Running or Needs attention signal is detected.
+- Supports optional Codex and Claude Code lifecycle hooks for immediate standalone Agent updates.
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps four numeric count options available, including zero values.
 - Refreshes status-driven scans asynchronously, retaining the previous widget while the next scan runs.
@@ -57,6 +58,58 @@ run-shell ~/.tmux/plugins/tmux-agents/tmux-agents.tmux
 ```
 
 Reload `tmux.conf` to start tracking Agents. The plugin replaces only the placeholder shown above and does not otherwise change status-bar placement.
+
+## Enable lifecycle hooks
+
+Lifecycle hooks are optional. When configured, a standalone Codex or Claude Code Agent reports session start, work, input requests, results, and normal session end directly to tmux-agents. This makes state updates immediate and keeps hook-reported state from being replaced by unrecognized visible output. The existing visible-screen detection remains available for Agents without hooks.
+
+Hooks must run in a tmux pane. The hook command safely does nothing outside tmux, and it records only the Agent type, state, session and turn identifiers, and timestamps—never the hook's prompt, tool input, or conversation text.
+
+Replace `/absolute/path/to/tmux-agents` below with the directory where you installed this plugin. Add the following configuration to `~/.codex/hooks.json` for Codex:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex start" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex running" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex running" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex input" }] }],
+    "PreToolUse": [{ "matcher": "request_user_input", "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex input" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex result" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex end" }] }]
+  }
+}
+```
+
+Codex requires you to review and trust non-managed command hooks before it runs them. Use `/hooks` in Codex after saving the file to review and trust these commands. tmux-agents never edits or trusts Codex configuration on your behalf.
+
+Add the equivalent user-wide configuration to `~/.claude/settings.json` for Claude Code:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude start" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude running" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude running" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude input" }] }],
+    "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude input" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude result" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude end" }] }]
+  }
+}
+```
+
+Claude Code merges user hooks with project and managed configuration. Review the final hook configuration with its `/hooks` command before relying on it.
+
+## Debug lifecycle tracking
+
+To trace lifecycle events and scanning decisions, enable the opt-in tmux message log:
+
+```tmux
+set -g @tmux_agents_debug 1
+```
+
+Inspect it with `tmux show-messages | grep 'tmux-agents debug'`. Messages are emitted only for scan-driven state changes and option updates. They never include visible screen text, prompts, tool input, or conversation content. Disable the trace with `set -gu @tmux_agents_debug`.
 
 ## Customize the status widget
 
