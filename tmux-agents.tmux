@@ -15,20 +15,12 @@ ensure_count() {
 install_placeholders() {
   option_name=$1
   option_value=$(tmux show-options -gqv "$option_name")
-  status_command="#{@tmux_agents_status}#('$plugin_root/scripts/status.sh' '#{pane_id}')"
-  scan_command="#('$plugin_root/scripts/status.sh' '#{pane_id}')"
+  status_command='#{@tmux_agents_status}'
   placeholders_installed=0
 
   case "$option_value" in
     *'#{tmux_agents}'*)
       option_value=${option_value//'#{tmux_agents}'/"$status_command"}
-      placeholders_installed=1
-      ;;
-  esac
-
-  case "$option_value" in
-    *'#{tmux_agents_scan}'*)
-      option_value=${option_value//'#{tmux_agents_scan}'/"$scan_command"}
       placeholders_installed=1
       ;;
   esac
@@ -60,5 +52,13 @@ fi
 tmux bind-key "$jump_key" run-shell -b \
   "\"$plugin_root/scripts/jump.sh\" '#{client_name}' '#{pane_id}'"
 
-selected_pane=${1:-$(tmux display-message -p '#{pane_id}')}
-"$plugin_root/scripts/status.sh" "$selected_pane"
+tmux set-hook after-select-pane \
+  "run-shell -b \"\\\"$plugin_root/scripts/selection.sh\\\" '#{pane_id}'\""
+tmux set-hook after-select-window \
+  "run-shell -b \"\\\"$plugin_root/scripts/selection.sh\\\" '#{pane_id}'\""
+tmux set-hook pane-exited \
+  "run-shell -b \"\\\"$plugin_root/scripts/lifecycle.sh\\\"\""
+
+"$plugin_root/scripts/reconcile.sh"
+"$plugin_root/scripts/scan.sh"
+"$plugin_root/scripts/schedule.sh" safety

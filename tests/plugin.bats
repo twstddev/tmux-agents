@@ -14,6 +14,7 @@ setup() {
 
   tmux_test new-session -d -s agents -x 80 -y 24
   tmux_test set-option -g remain-on-exit on
+  tmux_test set-option -g @tmux_agents_hook_grace_seconds 0
 }
 
 teardown() {
@@ -175,6 +176,15 @@ pane_state_is() {
   expected_state=$2
 
   [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_state')" = "$expected_state" ]
+}
+
+pane_attention_is_acknowledged() {
+  target=$1
+
+  [ "$(tmux_test show-options -pqv -t "$target" \
+    '@tmux_agents_acknowledged_signature')" = \
+    "$(tmux_test show-options -pqv -t "$target" \
+      '@tmux_agents_attention_signature')" ]
 }
 
 client_messages_contain() {
@@ -476,7 +486,7 @@ send_hook_event() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
 }
 
-@test "selecting a hook-reported Reviewable result acknowledges it as Stale" {
+@test "a hook-reported Reviewable result remains until pane selection acknowledges it" {
   show_idle_claude agents:0.0
   load_plugin
   send_hook_event agents:0.0 claude start claude-session-1
@@ -484,7 +494,12 @@ send_hook_event() {
 
   load_plugin agents:0.0
 
-  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  tmux_test new-window -d -t agents: -n elsewhere
+  tmux_test select-window -t agents:elsewhere
+  tmux_test select-window -t agents:0
+
+  retry_until 100 plugin_option_is '@tmux_agents_count_attention' 0
   [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
 }
 
@@ -536,6 +551,46 @@ send_hook_event() {
 
   [ "$(<"$capture_count")" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+}
+
+@test "a discovered Agent waits for the default hook grace before passive fallback" {
+  show_idle_codex agents:0.0
+  tmux_test set-option -gu @tmux_agents_hook_grace_seconds
+
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_state_source')" = 'grace' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+
+  tmux_test set-option -pq -t agents:0.0 '@tmux_agents_fallback_after' 0
+  tmux_test run-shell "$project_root/scripts/schedule.sh run-fallback"
+
+  pane_state_is agents:0.0 stale
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_state_source')" = 'passive' ]
+}
+
+@test "a valid hook event removes an Agent from fallback polling immediately" {
+  show_idle_codex agents:0.0
+  capture_count="$BATS_TEST_TMPDIR/capture-count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_CAPTURE_COUNT="$capture_count"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_CAPTURE_COUNT "$capture_count"
+  load_plugin agents:0.0
+  printf '%s\n' 0 >"$capture_count"
+
+  send_hook_event agents:0.0 codex start codex-session-1
+  tmux_test run-shell "$project_root/scripts/scan.sh"
+
+  [ "$(<"$capture_count")" = '0' ]
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_state_source')" = 'hook' ]
+}
+
+@test "plugin setup schedules the default sixty-second safety reconciliation" {
+  load_plugin agents:0.0
+
+  [ "$(tmux_test show-options -gqv '@tmux_agents_safety_scheduled')" = '1' ]
 }
 
 @test "an unchanged hook Agent scan does not redraw status options" {
@@ -714,10 +769,9 @@ send_hook_event() {
   [ -n "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')" ]
   [ -z "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_acknowledged_signature')" ]
 
-  load_plugin agents:input.0
+  tmux_test select-window -t agents:input
 
-  [ "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_acknowledged_signature')" = \
-    "$(tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')" ]
+  retry_until 100 pane_attention_is_acknowledged "$pane_id"
   runtime_options=$(all_runtime_options agents:input.0)
   case "$runtime_options" in
     *'Would you like to run the following command?'*|*'git status --short'*) false ;;
@@ -746,7 +800,7 @@ send_hook_event() {
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
-@test "a Codex Agent that finishes in the background Needs attention" {
+@test "a replaced passive Codex Agent begins stale rather than inheriting old work" {
   tmux_test new-window -d -t agents: -n reviewable
   show_running_codex agents:reviewable.0
   load_plugin agents:0.0
@@ -756,10 +810,10 @@ send_hook_event() {
   show_codex_result agents:reviewable.0
   load_plugin agents:0.0
 
-  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
-  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'stale' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 
   attention_since=$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state_since')
@@ -772,7 +826,7 @@ send_hook_event() {
   [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state_since')" = "$attention_since" ]
 }
 
-@test "a Claude Code Agent that finishes in the background Needs attention" {
+@test "a replaced passive Claude Code Agent begins stale rather than inheriting old work" {
   tmux_test new-window -d -t agents: -n reviewable
   show_running_claude agents:reviewable.0
   load_plugin agents:0.0
@@ -780,8 +834,8 @@ send_hook_event() {
   show_claude_result agents:reviewable.0
   load_plugin agents:0.0
 
-  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
-  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'stale' ]
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 }
 
@@ -801,12 +855,12 @@ send_hook_event() {
   state_counts_sum_to_total
 }
 
-@test "ordinary pane selection acknowledges a Reviewable result as Stale" {
+@test "ordinary pane selection acknowledges a hook Reviewable result as Stale" {
   tmux_test new-window -d -t agents: -n reviewable
-  show_running_claude agents:reviewable.0
+  show_idle_claude agents:reviewable.0
   load_plugin agents:0.0
-  show_claude_result agents:reviewable.0
-  load_plugin agents:0.0
+  send_hook_event agents:reviewable.0 claude start claude-session-1
+  send_hook_event agents:reviewable.0 claude result claude-session-1 turn-2
 
   [ "$(tmux_test show-options -pv -t agents:reviewable.0 '@tmux_agents_state')" = 'attention' ]
   state_counts_sum_to_total
@@ -837,15 +891,11 @@ send_hook_event() {
   [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
   state_counts_sum_to_total
 
-  while [ "$(date +%s)" -le "$attention_since" ]; do
-    sleep 0.02
-  done
-
   tmux_test select-window -t agents:0
   load_plugin agents:0.0
 
   [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
-  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" -gt "$attention_since" ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" -ge "$attention_since" ]
   [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
   state_counts_sum_to_total
 
@@ -884,10 +934,8 @@ send_hook_event() {
   tmux_test select-window -t agents:0
   load_plugin agents:0.0
 
-  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'attention' ]
-  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_attention_evidence')" = 'result' ]
-  [ -z "$(tmux_test show-options -pqv -t agents:input.0 '@tmux_agents_acknowledged_signature')" ]
-  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state_since')" != '1' ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_state')" = 'stale' ]
+  [ "$(tmux_test show-options -pv -t agents:input.0 '@tmux_agents_identity')" != '' ]
 }
 
 @test "an unsupported Agent screen is Stale" {
@@ -1043,10 +1091,9 @@ send_hook_event() {
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
 
   tmux_test kill-pane -t agents:background.0
-  load_plugin agents:0.0
 
-  [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
-  [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+  retry_until 100 plugin_option_is '@tmux_agents_count_stale' 0
+  retry_until 100 plugin_option_is '@tmux_agents_count_total' 0
 }
 
 @test "the default widget shows nonzero Running in green before Stale" {
@@ -1075,32 +1122,23 @@ send_hook_event() {
     '󰚩 #[fg=colour208]#[fg=colour232,bg=colour208]1#[fg=colour208,bg=default] #[fg=colour40]1 #[fg=colour244]0'
 }
 
-@test "status retains its prior rendering while 25 Agents scan asynchronously" {
-  tmux_test set-option -g status-interval 0
-  tmux_test set-option -g status off
+@test "ordinary status rendering performs no discovery or screen capture" {
   tmux_test set-option -g status-right '#{tmux_agents}'
+  capture_count="$BATS_TEST_TMPDIR/capture-count"
+  enable_process_snapshot
+  set_process_snapshot "$(pane_process_id agents:0.0) 1 bash"
+  export TMUX_AGENTS_TEST_CAPTURE_COUNT="$capture_count"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_CAPTURE_COUNT "$capture_count"
   load_plugin agents:0.0
   attach_status_client
+  printf '%s\n' 0 >"$capture_count"
+  printf '%s\n' 0 >"$process_snapshot_count"
 
-  index=1
-  while [ "$index" -le 25 ]; do
-    tmux_test new-window -d -t agents: -n "running-$index"
-    show_running_codex "agents:running-$index.0"
-    index=$((index + 1))
-  done
+  tmux_test refresh-client -t "$status_client_name" -S
+  tmux_test display-message -p '#{E:status-right}' >/dev/null
 
-  tmux_test set-option -g status-interval 2
-  tmux_test set-option -g status on
-  rendered_status=$(tmux_test display-message -p '#{E:status-right}')
-
-  case "$rendered_status" in
-    *'󰚩 0'*) ;;
-    *) false ;;
-  esac
-  [ "$(tmux_test display-message -p '#{session_name}')" = 'agents' ]
-  retry_until 100 plugin_option_is '@tmux_agents_count_running' '25'
-  retry_until 100 plugin_option_is '@tmux_agents_count_total' '25'
-  retry_until 100 status_right_contains '#[fg=colour40]25'
+  [ "$(<"$capture_count")" = '0' ]
+  [ "$(<"$process_snapshot_count")" = '0' ]
 }
 
 @test "the explicit default placeholder renders the robot and Stale zero" {
@@ -1116,7 +1154,7 @@ send_hook_event() {
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
 }
 
-@test "the zero-width scan placeholder refreshes custom status counts" {
+@test "the obsolete scan placeholder is not installed or executed" {
   tmux_test new-window -d -t agents: -n running
   show_running_codex agents:running.0
   tmux_test set-option -g status-right \
@@ -1126,18 +1164,9 @@ send_hook_event() {
   load_plugin agents:0.0
 
   installed_status=$(tmux_test show-options -gv status-right)
-  case "$installed_status" in
-    *'#{tmux_agents_scan}'*|*'#{@tmux_agents_status}'*) false ;;
-  esac
+  [ "$installed_status" = 'Agents: #{@tmux_agents_count_running}#{tmux_agents_scan}' ]
   retry_until 100 status_right_contains 'Agents: 1'
   [ "$(tmux_test display-message -p '#{E:status-right}')" = 'Agents: 1' ]
-
-  show_unsupported_agent agents:running.0 codex
-  tmux_test refresh-client -t "$status_client_name" -S
-
-  retry_until 100 plugin_option_is '@tmux_agents_count_running' 0
-  retry_until 100 plugin_option_is '@tmux_agents_count_stale' 1
-  retry_until 100 status_right_contains 'Agents: 0'
 }
 
 @test "the chooser groups Agents with useful context and a live screen preview" {
@@ -1236,8 +1265,8 @@ send_hook_event() {
   tmux_test select-window -t other:decoy
   show_running_codex other:target.1
   load_plugin agents:0.0
-  show_codex_result other:target.1
-  load_plugin agents:0.0
+  send_hook_event other:target.1 codex start codex-session-1
+  send_hook_event other:target.1 codex result codex-session-1 turn-2
 
   target_id=$(tmux_test display-message -p -t other:target.1 '#{pane_id}')
   target_location=$(tmux_test display-message -p -t "$target_id" \
@@ -1350,9 +1379,10 @@ send_hook_event() {
   show_running_codex other:oldest-result.0
   show_running_claude other:newer-result.0
   load_plugin agents:0.0
-  show_codex_result other:oldest-result.0
-  show_claude_result other:newer-result.0
-  load_plugin agents:0.0
+  send_hook_event other:oldest-result.0 codex start codex-session-1
+  send_hook_event other:newer-result.0 claude start claude-session-2
+  send_hook_event other:oldest-result.0 codex result codex-session-1 turn-2
+  send_hook_event other:newer-result.0 claude result claude-session-2 turn-2
 
   tmux_test set-option -pq -t other:oldest-result.0 \
     '@tmux_agents_state_since' 10

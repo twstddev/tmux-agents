@@ -4,9 +4,9 @@ set -e
 
 plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 client_name=$1
-selected_pane=$2
 
-"$plugin_root/scripts/scan.sh" "$selected_pane"
+"$plugin_root/scripts/reconcile.sh"
+"$plugin_root/scripts/scan.sh"
 
 target_pane=
 while IFS=$'\t' read -r _state_since pane_id; do
@@ -33,4 +33,4 @@ if [ -z "$target_pane" ]; then
 fi
 
 tmux switch-client -c "$client_name" -t "$target_pane"
-"$plugin_root/scripts/scan.sh" "$target_pane"
+"$plugin_root/scripts/selection.sh" "$target_pane"

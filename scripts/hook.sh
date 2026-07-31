@@ -66,7 +66,6 @@ if [ "$event_name" = 'end' ]; then
 
   state_debug "hook event=end pane=$hook_pane_id type=$agent_type identity=$session_identity"
   state_apply_event remove "$hook_pane_id"
-  tmux refresh-client -S 2>/dev/null || true
   exit 0
 fi
 
@@ -96,5 +95,3 @@ result)
     "$event_signature" '' 'hook' "$session_identity" 'result'
   ;;
 esac
-
-tmux refresh-client -S 2>/dev/null || true

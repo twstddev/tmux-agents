@@ -148,7 +148,8 @@ $details"
 }
 
 if [ "$items_mode" -eq 1 ]; then
-  "$plugin_root/scripts/scan.sh" "$selected_pane"
+  "$plugin_root/scripts/reconcile.sh"
+  "$plugin_root/scripts/scan.sh"
   chooser_items
   exit 0
 fi
@@ -190,4 +191,4 @@ if ! tmux display-message -p -t "$target_pane" '#{pane_id}' >/dev/null 2>&1; the
 fi
 
 tmux switch-client -c "$client_name" -t "$target_pane"
-tmux run-shell -b "\"$plugin_root/scripts/scan.sh\" '$target_pane'"
+tmux run-shell -b "\"$plugin_root/scripts/selection.sh\" '$target_pane'"

@@ -22,6 +22,13 @@ state_clear_attention_event() {
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_acknowledged_signature' 2>/dev/null || true
 }
 
+state_clear_fallback_schedule() {
+  state_pane_id=$1
+
+  tmux set-option -puq -t "$state_pane_id" '@tmux_agents_fallback_after' \
+    2>/dev/null || true
+}
+
 state_remove_agent() {
   state_pane_id=$1
   state_existing_type=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_type')
@@ -39,6 +46,42 @@ state_remove_agent() {
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_state' 2>/dev/null || true
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_state_since' 2>/dev/null || true
   state_clear_attention_event "$state_pane_id"
+  state_clear_fallback_schedule "$state_pane_id"
+}
+
+state_register_discovered_agent() {
+  state_pane_id=$1
+  state_agent_type=$2
+  state_process_identity=$3
+  state_grace_seconds=$4
+  state_recorded_process_identity=$(tmux show-options -pqv -t "$state_pane_id" \
+    '@tmux_agents_process_identity')
+  state_source=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_state_source')
+  state_recorded_type=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_type')
+
+  if [ "$state_source" = 'hook' ] && [ -z "$state_recorded_process_identity" ] &&
+    [ "$state_recorded_type" = "$state_agent_type" ]; then
+    state_record_process_identity "$state_pane_id" "$state_process_identity"
+    return 0
+  fi
+  if [ "$state_source" = 'hook' ] &&
+    [ "$state_recorded_process_identity" = "$state_process_identity" ]; then
+    return 0
+  fi
+  if [ "$state_recorded_process_identity" = "$state_process_identity" ] &&
+    { [ "$state_source" = 'grace' ] || [ "$state_source" = 'passive' ]; }; then
+    return 0
+  fi
+
+  state_remove_agent "$state_pane_id"
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_type' "$state_agent_type"
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_identity' "$state_process_identity"
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_process_identity' \
+    "$state_process_identity"
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_state_source' 'grace'
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_fallback_after' \
+    "$(( $(date +%s) + state_grace_seconds ))"
+  state_debug "discover pane=$state_pane_id type=$state_agent_type identity=$state_process_identity"
 }
 
 state_record_process_identity() {
@@ -105,6 +148,7 @@ state_transition_agent() {
 
   tmux set-option -pq -t "$state_pane_id" '@tmux_agents_type' "$state_agent_type"
   tmux set-option -pq -t "$state_pane_id" '@tmux_agents_state_source' "$state_source"
+  state_clear_fallback_schedule "$state_pane_id"
   if [ -n "$state_identity" ]; then
     tmux set-option -pq -t "$state_pane_id" '@tmux_agents_identity' "$state_identity"
   fi
@@ -220,4 +264,5 @@ state_render_status() {
 state_refresh() {
   state_refresh_counts
   state_render_status
+  tmux refresh-client -S 2>/dev/null || true
 }
