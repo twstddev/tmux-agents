@@ -29,6 +29,23 @@ state_clear_fallback_schedule() {
     2>/dev/null || true
 }
 
+state_clear_host_metadata() {
+  state_pane_id=$1
+
+  tmux set-option -puq -t "$state_pane_id" '@tmux_agents_host' 2>/dev/null || true
+  tmux set-option -puq -t "$state_pane_id" '@tmux_agents_nvim_server' \
+    2>/dev/null || true
+}
+
+state_record_sidekick_host() {
+  state_pane_id=$1
+  state_nvim_server=$2
+
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_host' 'sidekick'
+  tmux set-option -pq -t "$state_pane_id" '@tmux_agents_nvim_server' \
+    "$state_nvim_server"
+}
+
 state_remove_agent() {
   state_pane_id=$1
   state_existing_type=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_type')
@@ -47,6 +64,7 @@ state_remove_agent() {
   tmux set-option -puq -t "$state_pane_id" '@tmux_agents_state_since' 2>/dev/null || true
   state_clear_attention_event "$state_pane_id"
   state_clear_fallback_schedule "$state_pane_id"
+  state_clear_host_metadata "$state_pane_id"
 }
 
 state_register_discovered_agent() {
@@ -144,6 +162,7 @@ state_transition_agent() {
     previous_state=
     previous_attention_signature=
     previous_acknowledged_signature=
+    state_clear_host_metadata "$state_pane_id"
   fi
 
   tmux set-option -pq -t "$state_pane_id" '@tmux_agents_type' "$state_agent_type"

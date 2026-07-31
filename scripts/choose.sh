@@ -190,5 +190,4 @@ if ! tmux display-message -p -t "$target_pane" '#{pane_id}' >/dev/null 2>&1; the
   exit 0
 fi
 
-tmux switch-client -c "$client_name" -t "$target_pane"
-tmux run-shell -b "\"$plugin_root/scripts/selection.sh\" '$target_pane'"
+tmux run-shell -b "\"$plugin_root/scripts/navigate.sh\" '$client_name' '$target_pane'"

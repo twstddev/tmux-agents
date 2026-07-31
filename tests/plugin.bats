@@ -9,8 +9,9 @@ setup() {
   cp "$(command -v bash)" "$test_bin/claude"
   cp "$project_root/tests/helpers/ps" "$test_bin/ps"
   cp "$project_root/tests/helpers/fzf" "$test_bin/fzf"
+  cp "$project_root/tests/helpers/nvim" "$test_bin/nvim"
   cp "$project_root/tests/helpers/tmux" "$test_bin/tmux"
-  chmod +x "$test_bin/ps" "$test_bin/fzf" "$test_bin/tmux"
+  chmod +x "$test_bin/ps" "$test_bin/fzf" "$test_bin/nvim" "$test_bin/tmux"
 
   tmux_test new-session -d -s agents -x 80 -y 24
   tmux_test set-option -g remain-on-exit on
@@ -198,6 +199,10 @@ client_messages_contain() {
   return 1
 }
 
+sidekick_show_was_requested() {
+  grep -Fq "sidekick.cli').show" "$nvim_args"
+}
+
 enable_fzf_stub() {
   chooser_input="$BATS_TEST_TMPDIR/chooser-input"
   chooser_args="$BATS_TEST_TMPDIR/chooser-args"
@@ -213,6 +218,21 @@ enable_fzf_stub() {
   tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_INITIAL "$chooser_initial"
   tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_PREVIEW "$chooser_preview"
   tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_STARTED "$chooser_started"
+}
+
+enable_nvim_stub() {
+  nvim_args="$BATS_TEST_TMPDIR/nvim-args"
+  nvim_response="$BATS_TEST_TMPDIR/nvim-response"
+  printf '%s\n' 1 >"$nvim_response"
+  : >"$nvim_args"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export PATH="$test_bin:$PATH"
+  export TMUX_AGENTS_TEST_NVIM_ARGS="$nvim_args"
+  export TMUX_AGENTS_TEST_NVIM_RESPONSE="$nvim_response"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_NVIM_ARGS "$nvim_args"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_NVIM_RESPONSE "$nvim_response"
 }
 
 enable_slow_initial_scan() {
@@ -378,14 +398,15 @@ send_hook_event() {
 
   if [ -n "${TMUX_AGENTS_TEST_REFRESH_COUNT-}" ] ||
     [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ] ||
-    [ -n "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT-}" ]; then
+    [ -n "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT-}" ] ||
+    [ -n "${TMUX_AGENTS_TEST_NVIM_ARGS-}" ]; then
     printf '%s\n' "{\"session_id\":\"$session_id\",\"turn_id\":\"$turn_id\"}" |
       PATH="$test_bin:$PATH" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$pane_id" \
-        "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
+        NVIM="${6-}" "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
   else
     printf '%s\n' "{\"session_id\":\"$session_id\",\"turn_id\":\"$turn_id\"}" |
       TMUX="$socket_path,$server_pid,0" TMUX_PANE="$pane_id" \
-        "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
+        NVIM="${6-}" "$project_root/scripts/hook.sh" "$agent_type" "$event_name"
   fi
 }
 
@@ -413,6 +434,122 @@ send_hook_event() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "a hook verifies an embedded Sidekick Agent before recording its host" {
+  enable_nvim_stub
+  load_plugin
+
+  send_hook_event agents:0.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_type')" = 'codex' ]
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_identity')" = \
+    'sidekick-session-1' ]
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_host')" = 'sidekick' ]
+  [ "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_nvim_server')" = \
+    '/tmp/nvim-sidekick' ]
+
+  case "$(<"$nvim_args")" in
+    *'--server /tmp/nvim-sidekick'*'sidekick.cli.state'*'external = false'*'terminal = true'*'agents[1].tool.name == _A'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$nvim_args")" in
+    *get_lines*|*scrollback*|*transcript*) false ;;
+  esac
+}
+
+@test "a later unverified hook clears Sidekick host metadata" {
+  enable_nvim_stub
+  load_plugin
+  send_hook_event agents:0.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+
+  printf '%s\n' fail >"$nvim_response"
+  send_hook_event agents:0.0 codex running sidekick-session-1 turn-2 \
+    /tmp/nvim-sidekick
+
+  [ -z "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_host')" ]
+  [ -z "$(tmux_test show-options -pqv -t agents:0.0 '@tmux_agents_nvim_server')" ]
+}
+
+@test "a failed Sidekick request leaves a direct jump switched and warns its client" {
+  tmux_test new-session -d -s other -n target -x 80 -y 24
+  show_running_codex other:target.0
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:target.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  send_hook_event other:target.0 codex input sidekick-session-1 turn-2 \
+    /tmp/nvim-sidekick
+
+  target_id=$(tmux_test display-message -p -t other:target.0 '#{pane_id}')
+  target_location=$(tmux_test display-message -p -t "$target_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  printf '%s\n' fail >"$nvim_response"
+  attach_status_client
+  attach_observer_client
+  observer_target=$(client_target "$observer_client_name")
+  load_plugin agents:0.0
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$target_location"
+  client_target_is "$observer_client_name" "$observer_target"
+  retry_until 100 client_messages_contain "$status_client_name" \
+    'tmux-agents: Sidekick could not show the Agent'
+  case "$(<"$nvim_args")" in
+    *"sidekick.cli').show"*'focus = true'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$nvim_args")" in
+    *toggle*|*layout*) false ;;
+  esac
+}
+
+@test "an external Agent keeps its real pane and does not use Sidekick RPC" {
+  tmux_test new-session -d -s other -n target -x 80 -y 24
+  show_running_codex other:target.0
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:target.0 codex start external-session-1
+  send_hook_event other:target.0 codex input external-session-1 turn-2
+
+  target_location=$(tmux_test display-message -p -t other:target.0 \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  attach_status_client
+  load_plugin agents:0.0
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$target_location"
+  [ ! -s "$nvim_args" ]
+}
+
+@test "chooser navigation opens and focuses a verified Sidekick Agent" {
+  tmux_test new-session -d -s other -n target -x 80 -y 24
+  show_running_codex other:target.0
+  enable_fzf_stub
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:target.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  send_hook_event other:target.0 codex result sidekick-session-1 turn-2 \
+    /tmp/nvim-sidekick
+
+  target_id=$(tmux_test display-message -p -t other:target.0 '#{pane_id}')
+  target_location=$(tmux_test display-message -p -t "$target_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_SELECTION "$target_id"
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  retry_until 100 client_target_is "$status_client_name" "$target_location"
+  retry_until 100 pane_state_is "$target_id" stale
+  retry_until 100 sidekick_show_was_requested
+  case "$(<"$nvim_args")" in
+    *'focus = true'*) ;;
+    *) false ;;
+  esac
 }
 
 @test "lifecycle hooks move an Agent through Running, Input, Reviewable, and removal" {

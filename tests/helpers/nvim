@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -e
+
+: "${TMUX_AGENTS_TEST_NVIM_ARGS:?}"
+: "${TMUX_AGENTS_TEST_NVIM_RESPONSE:?}"
+
+printf '%s\n' "$*" >>"$TMUX_AGENTS_TEST_NVIM_ARGS"
+
+response=$(<"$TMUX_AGENTS_TEST_NVIM_RESPONSE")
+if [ "$response" = 'fail' ]; then
+  exit 1
+fi
+
+printf '%s\n' "$response"

@@ -7,6 +7,9 @@ plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=state.sh
 . "$plugin_root/scripts/state.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=sidekick.sh
+. "$plugin_root/scripts/sidekick.sh"
 
 agent_type=${1-}
 event_name=${2-}
@@ -95,3 +98,8 @@ result)
     "$event_signature" '' 'hook' "$session_identity" 'result'
   ;;
 esac
+
+state_clear_host_metadata "$hook_pane_id"
+if sidekick_verifies_embedded_host "$agent_type" "${NVIM-}"; then
+  state_record_sidekick_host "$hook_pane_id" "$NVIM"
+fi

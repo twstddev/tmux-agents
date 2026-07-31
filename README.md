@@ -16,6 +16,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Changes a Reviewable result to Stale after its pane is selected. Selecting an Input request acknowledges it temporarily; it returns to Needs attention if the user leaves without responding.
 - Marks idle, unsupported, and ambiguous Agent screens as Stale when no Running or Needs attention signal is detected.
 - Supports optional Codex and Claude Code lifecycle hooks for immediate standalone Agent updates.
+- Verifies Sidekick's embedded Codex and Claude Code terminals through Neovim RPC when a hook runs inside Neovim, then returns navigation to the containing editor pane and opens the Agent in Sidekick's configured layout.
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps four numeric count options available, including zero values.
 - Keeps status rendering event-driven: the widget reads cached tmux options and never starts process discovery or captures a screen.
@@ -28,6 +29,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - tmux 3.3 or newer
 - Bash 3.2 or newer
 - fzf 0.61.3 or newer for the Agent chooser
+- Neovim with [sidekick.nvim](https://github.com/folke/sidekick.nvim) for embedded Sidekick Agent navigation
 - A Nerd Font for the default robot icon
 
 ## Install with TPM
@@ -60,7 +62,7 @@ Reload `tmux.conf` to start tracking Agents. The plugin replaces only the placeh
 
 ## Enable lifecycle hooks
 
-Lifecycle hooks are optional. When configured, a standalone Codex or Claude Code Agent reports session start, work, input requests, results, and normal session end directly to tmux-agents. This makes state updates immediate and keeps hook-reported state from being replaced by unrecognized visible output. Agents without a working registration fall back to visible-screen detection after a short grace period.
+Lifecycle hooks are optional. When configured, a standalone Codex or Claude Code Agent reports session start, work, input requests, results, and normal session end directly to tmux-agents. This makes state updates immediate and keeps hook-reported state from being replaced by unrecognized visible output. When the hook runs in Sidekick's embedded terminal, tmux-agents also verifies the host through Neovim RPC. Agents without a working registration fall back to visible-screen detection after a short grace period.
 
 Hooks must run in a tmux pane. The hook command safely does nothing outside tmux, and it records only the Agent type, state, session and turn identifiers, and timestamps—never the hook's prompt, tool input, or conversation text.
 
@@ -128,7 +130,7 @@ Press prefix + <kbd>A</kbd> to open the Agent chooser. It appears immediately wi
 
 Each entry shows its state, Agent type, tmux location, working directory, and state age. A useful Agent title appears on a separate first line. The right-side preview reads only the highlighted pane's current visible screen and preserves its colors and text attributes.
 
-Select an entry to switch the client that opened the chooser to that Agent. Selecting an Agent also acknowledges it in the same way as ordinary tmux navigation.
+Select an entry to switch the client that opened the chooser to that Agent. Selecting an Agent also acknowledges it in the same way as ordinary tmux navigation. For a verified Sidekick Agent, the client switches to its Neovim pane and Sidekick shows and focuses the existing terminal without changing its configured float or split layout. If the Sidekick request fails, the client remains in the Neovim pane and receives a concise warning.
 
 Set `@tmux_agents_chooser_key` before loading the plugin to change the default uppercase <kbd>A</kbd> binding:
 
@@ -138,7 +140,7 @@ set -g @tmux_agents_chooser_key 'G'
 
 ## Jump through Needs attention
 
-Press prefix + <kbd>a</kbd> to reconcile Agent discovery and switch directly to the longest-waiting Agent that Needs attention. Repeating the shortcut moves through Reviewable results from oldest to newest as each result is acknowledged. If no Agent needs attention, tmux shows a short message and leaves you in place.
+Press prefix + <kbd>a</kbd> to reconcile Agent discovery and switch directly to the longest-waiting Agent that Needs attention. Repeating the shortcut moves through Reviewable results from oldest to newest as each result is acknowledged. For a verified Sidekick Agent, the shortcut opens and focuses its Sidekick terminal after switching to the containing Neovim pane. If no Agent needs attention, tmux shows a short message and leaves you in place.
 
 Set `@tmux_agents_jump_key` before loading the plugin to change the default lowercase <kbd>a</kbd> binding:
 
@@ -161,6 +163,7 @@ All four options are updated by hook, selection, pane-lifecycle, fallback, and r
 
 - Detection recognizes the current English Codex and Claude Code TUI layouts. Agents using customized, translated, or newly changed layouts are treated as Stale unless a Running or Needs attention signal is recognized.
 - Discovery follows each pane's process tree to find `codex` and `claude` descendants. One Agent is represented per pane; unsupported processes do not create an Agent entry.
+- A hook with an `NVIM` server address verifies that Sidekick owns one embedded terminal for the Agent type before recording it as a Sidekick Agent. The RPC calls only inspect Sidekick host metadata and request that terminal be shown and focused; they never read terminal lines, scrollback, or transcripts.
 - Discovery covers every pane in the current tmux server, but does not cross into a separate tmux socket server, remote host, or nested tmux instance.
 - Hook events are preferred. An Agent without hook registration receives a short grace period and then is passively checked every two seconds. A valid hook event stops that pane's fallback polling immediately.
 - The 60-second safety reconciliation catches Agent processes that ended without reporting a normal session end, so an unreported shutdown can remain visible for up to that interval. Set `@tmux_agents_safety_interval` before loading the plugin to choose another positive number of seconds.

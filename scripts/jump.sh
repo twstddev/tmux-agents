@@ -32,5 +32,4 @@ if [ -z "$target_pane" ]; then
   exit 0
 fi
 
-tmux switch-client -c "$client_name" -t "$target_pane"
-"$plugin_root/scripts/selection.sh" "$target_pane"
+"$plugin_root/scripts/navigate.sh" "$client_name" "$target_pane"
