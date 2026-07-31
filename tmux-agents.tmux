@@ -12,17 +12,30 @@ ensure_count() {
   fi
 }
 
-install_placeholder() {
+install_placeholders() {
   option_name=$1
   option_value=$(tmux show-options -gqv "$option_name")
   status_command="#{@tmux_agents_status}#('$plugin_root/scripts/status.sh' '#{pane_id}')"
+  scan_command="#('$plugin_root/scripts/status.sh' '#{pane_id}')"
+  placeholders_installed=0
 
   case "$option_value" in
     *'#{tmux_agents}'*)
       option_value=${option_value//'#{tmux_agents}'/"$status_command"}
-      tmux set-option -gq "$option_name" "$option_value"
+      placeholders_installed=1
       ;;
   esac
+
+  case "$option_value" in
+    *'#{tmux_agents_scan}'*)
+      option_value=${option_value//'#{tmux_agents_scan}'/"$scan_command"}
+      placeholders_installed=1
+      ;;
+  esac
+
+  if [ "$placeholders_installed" -eq 1 ]; then
+    tmux set-option -gq "$option_name" "$option_value"
+  fi
 }
 
 ensure_count '@tmux_agents_count_attention'
@@ -31,8 +44,8 @@ ensure_count '@tmux_agents_count_unknown'
 ensure_count '@tmux_agents_count_stale'
 ensure_count '@tmux_agents_count_total'
 
-install_placeholder 'status-left'
-install_placeholder 'status-right'
+install_placeholders 'status-left'
+install_placeholders 'status-right'
 
 chooser_key=$(tmux show-options -gqv '@tmux_agents_chooser_key')
 if [ -z "$chooser_key" ]; then

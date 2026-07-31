@@ -26,11 +26,9 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 ## Requirements
 
 - tmux 3.3 or newer
-- Bash, with runtime scripts compatible with Bash 3.2
-- fzf 0.61.3 or newer
-- A Nerd Font for the robot icon
-
-Contributors also need Bats and ShellCheck.
+- Bash 3.2 or newer
+- fzf 0.61.3 or newer for the Agent chooser
+- A Nerd Font for the default robot icon
 
 ## Install with TPM
 
@@ -61,6 +59,19 @@ run-shell ~/.tmux/plugins/tmux-agents/tmux-agents.tmux
 ```
 
 Reload `tmux.conf` to start tracking Agents. The plugin replaces only the placeholder shown above and does not otherwise change status-bar placement.
+
+## Customize the status widget
+
+The default `#{tmux_agents}` widget shows the robot icon, followed by Needs attention, Running, Unknown, and Stale. Needs attention, Running, and Unknown disappear when their count is zero; Stale remains visible so the widget has a stable presence.
+
+For custom styling, add the zero-width `#{tmux_agents_scan}` trigger and render any of the public count options yourself. The trigger refreshes the counts asynchronously without adding text:
+
+```tmux
+set -g status-interval 2
+set -ag status-right ' #{tmux_agents_scan}A:#{@tmux_agents_count_attention} R:#{@tmux_agents_count_running} U:#{@tmux_agents_count_unknown} S:#{@tmux_agents_count_stale}'
+```
+
+Set either placeholder before the plugin entry point runs. The plugin does not add a placeholder or change `status-left` or `status-right` on its own.
 
 ## Browse Agents
 
@@ -97,3 +108,11 @@ The following global tmux user options always contain numeric values:
 - `@tmux_agents_count_total`
 
 All five options reflect each completed scan. The four state counts are mutually exclusive and sum to the total.
+
+## Detection and privacy limits
+
+- Detection recognizes the current English Codex and Claude Code TUI layouts. Agents using customized, translated, or newly changed layouts may be classified as Unknown until their screen signatures are supported.
+- Only panes whose direct foreground command is `codex` or `claude` are discovered. Wrapper processes are not followed.
+- Discovery covers every pane in the current tmux server, but does not cross into a separate tmux socket server, remote host, or nested tmux instance.
+- Classification is passive screen inference. tmux-agents does not configure lifecycle hooks, terminal bells, or either Agent CLI.
+- Each scan captures only the visible screen grid. It does not request scrollback, read transcripts, or persist captured text. Pane-scoped metadata contains Agent type, state and transition time, attention and acknowledgment data, detector evidence, and a non-reversible screen signature. It disappears when the pane closes.

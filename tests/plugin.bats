@@ -52,6 +52,14 @@ state_counts_sum_to_total() {
   [ "$((attention + running + unknown + stale))" -eq "$total" ]
 }
 
+all_runtime_options() {
+  target=$1
+
+  tmux_test show-options -g
+  tmux_test show-options -w -t "$target"
+  tmux_test show-options -p -t "$target"
+}
+
 retry_until() {
   max_attempts=$1
   shift
@@ -352,9 +360,7 @@ show_unsupported_agent() {
   retry_until 100 status_right_contains '󰚩 #[fg=colour220]1 #[fg=colour244]1'
   [ "$(tmux_test show-options -pqv -t agents:background.0 '@tmux_agents_state')" = 'unknown' ]
 
-  runtime_options=$(tmux_test show-options -g)
-  runtime_options="$runtime_options$(tmux_test show-options -w -t agents:0.0)"
-  runtime_options="$runtime_options$(tmux_test show-options -p -t agents:0.0)"
+  runtime_options=$(all_runtime_options agents:0.0)
   case "$runtime_options" in
     *'Ask Codex to do anything'*|*'100% left'*) false ;;
   esac
@@ -369,6 +375,28 @@ show_unsupported_agent() {
   [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_unknown')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
+}
+
+@test "a scan ignores scrollback and does not persist captured text" {
+  scrollback_marker="tmux-agents-private-$BATS_TEST_NUMBER-$$"
+  tmux_test respawn-pane -k -t agents:0.0 \
+    "$project_root/tests/fixtures/show-codex-unsupported-with-scrollback.sh '$test_bin/codex' '$scrollback_marker'"
+  retry_until 50 pane_current_command_is agents:0.0 codex
+
+  full_history=$(tmux_test capture-pane -p -S - -t agents:0.0)
+  case "$full_history" in
+    *"$scrollback_marker"*'• Working (1s • esc to interrupt)'*) ;;
+    *) false ;;
+  esac
+
+  load_plugin agents:0.0
+
+  pane_state_is agents:0.0 unknown
+  runtime_options=$(all_runtime_options agents:0.0)
+  case "$runtime_options" in
+    *"$scrollback_marker"*|*'Visible output has no supported evidence.'*) false ;;
+  esac
+  [ -z "$(find "$BATS_TEST_TMPDIR" -type f ! -path "$test_bin/*" -print -quit)" ]
 }
 
 @test "a first-discovered background idle Codex Agent is Unknown" {
@@ -741,6 +769,30 @@ show_unsupported_agent() {
   [ "$(tmux_test show-options -gv status-right)" = "$installed_status" ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "the zero-width scan placeholder refreshes custom status counts" {
+  tmux_test new-window -d -t agents: -n running
+  show_running_codex agents:running.0
+  tmux_test set-option -g status-right \
+    'Agents: #{@tmux_agents_count_running}#{tmux_agents_scan}'
+  attach_status_client
+
+  load_plugin agents:0.0
+
+  installed_status=$(tmux_test show-options -gv status-right)
+  case "$installed_status" in
+    *'#{tmux_agents_scan}'*|*'#{@tmux_agents_status}'*) false ;;
+  esac
+  retry_until 100 status_right_contains 'Agents: 1'
+  [ "$(tmux_test display-message -p '#{E:status-right}')" = 'Agents: 1' ]
+
+  show_unsupported_agent agents:running.0 codex
+  tmux_test refresh-client -t "$status_client_name" -S
+
+  retry_until 100 plugin_option_is '@tmux_agents_count_running' 0
+  retry_until 100 plugin_option_is '@tmux_agents_count_unknown' 1
+  retry_until 100 status_right_contains 'Agents: 0'
 }
 
 @test "the chooser groups Agents with useful context and a live screen preview" {
