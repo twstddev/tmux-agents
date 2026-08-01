@@ -122,6 +122,8 @@ chooser_items() {
     pane_state=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state')
     pane_since=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state_since')
     pane_type=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_type')
+    pane_host=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_host')
+    pane_source=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state_source')
     session_name=$(sanitize_field \
       "$(tmux display-message -p -t "$pane_id" '#{session_name}')")
     window_name=$(sanitize_field \
@@ -133,6 +135,12 @@ chooser_items() {
       "$(tmux display-message -p -t "$pane_id" '#{pane_title}')")
     pane_location="$session_name:$window_name.$pane_index"
     pane_agent_label=$(agent_label "$pane_type")
+    if [ "$pane_host" = 'sidekick' ]; then
+      pane_agent_label="$pane_agent_label · Sidekick"
+      if [ "$pane_source" != 'hook' ]; then
+        pane_agent_label="$pane_agent_label · hook unavailable"
+      fi
+    fi
     details="$(state_label "$pane_state") · $pane_agent_label · $pane_location · $pane_path · $(state_age "$pane_since" "$current_time")"
 
     if title_is_useful "$pane_title" "$pane_type" "$pane_agent_label" \
@@ -171,7 +179,7 @@ if ! selection=$(
       --prompt='Agents> ' \
       --bind="start:reload-sync($reload_command)" \
       --preview-window='right,60%,wrap' \
-      --preview="case {1} in %*) tmux capture-pane -p -e -t {1} ;; esac"
+      --preview="\"$plugin_root/scripts/preview.sh\" {1}"
 ); then
   exit 0
 fi

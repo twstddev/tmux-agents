@@ -12,4 +12,20 @@ if [ "$response" = 'fail' ]; then
   exit 1
 fi
 
+if [ "$response" = 'hidden' ]; then
+  case "$*" in
+    *'is_open()'*) printf '%s\n' 0 ;;
+    *) printf '%s\n' 1 ;;
+  esac
+  exit 0
+fi
+
+if [ "$response" = 'unavailable' ]; then
+  case "$*" in
+    *'is_open()'*) printf '%s\n' 2 ;;
+    *) printf '%s\n' 1 ;;
+  esac
+  exit 0
+fi
+
 printf '%s\n' "$response"

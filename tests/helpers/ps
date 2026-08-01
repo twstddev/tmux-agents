@@ -7,6 +7,21 @@ if [ -z "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT-}" ]; then
   exit 0
 fi
 
+if [ "${1-}" = 'eww' ]; then
+  if [ -n "${TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT-}" ]; then
+    environment_count=0
+    if [ -f "$TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT" ]; then
+      environment_count=$(<"$TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT")
+    fi
+    printf '%s\n' "$((environment_count + 1))" \
+      >"$TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT"
+  fi
+  if [ -n "${TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT-}" ]; then
+    cat "$TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT"
+  fi
+  exit 0
+fi
+
 if [ -n "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT-}" ]; then
   snapshot_count=0
   if [ -f "$TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT" ]; then

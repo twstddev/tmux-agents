@@ -2,6 +2,7 @@
 
 setup() {
   project_root=$(cd "$BATS_TEST_DIRNAME/.." && pwd)
+  real_tmux=$(command -v tmux)
   socket_path="$BATS_TEST_TMPDIR/tmux.sock"
   test_bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$test_bin"
@@ -211,7 +212,7 @@ enable_fzf_stub() {
   chooser_preview="$BATS_TEST_TMPDIR/chooser-preview"
   chooser_started="$BATS_TEST_TMPDIR/chooser-started"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
-  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$(command -v tmux)"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$real_tmux"
   tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_INPUT "$chooser_input"
   tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_ARGS "$chooser_args"
   tmux_test set-environment -g TMUX_AGENTS_TEST_FZF_DONE "$chooser_done"
@@ -225,7 +226,7 @@ enable_nvim_stub() {
   nvim_response="$BATS_TEST_TMPDIR/nvim-response"
   printf '%s\n' 1 >"$nvim_response"
   : >"$nvim_args"
-  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
   export PATH="$test_bin:$PATH"
   export TMUX_AGENTS_TEST_NVIM_ARGS="$nvim_args"
   export TMUX_AGENTS_TEST_NVIM_RESPONSE="$nvim_response"
@@ -369,18 +370,31 @@ show_host_process() {
 enable_process_snapshot() {
   process_snapshot="$BATS_TEST_TMPDIR/process-snapshot"
   process_snapshot_count="$BATS_TEST_TMPDIR/process-snapshot-count"
-  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  process_environment="$BATS_TEST_TMPDIR/process-environment"
+  process_environment_count="$BATS_TEST_TMPDIR/process-environment-count"
+  : >"$process_environment"
+  printf '%s\n' 0 >"$process_environment_count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
   export TMUX_AGENTS_TEST_PROCESS_SNAPSHOT="$process_snapshot"
   export TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT="$process_snapshot_count"
+  export TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT="$process_environment"
+  export TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT="$process_environment_count"
   export PATH="$test_bin:$PATH"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
   tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
   tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_SNAPSHOT "$process_snapshot"
   tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT "$process_snapshot_count"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT "$process_environment"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT \
+    "$process_environment_count"
 }
 
 set_process_snapshot() {
   printf '%s\n' "$@" >"$process_snapshot"
+}
+
+set_process_environment() {
+  printf '%s\n' "$@" >"$process_environment"
 }
 
 pane_process_id() {
@@ -552,6 +566,160 @@ send_hook_event() {
   esac
 }
 
+@test "the chooser marks a verified Sidekick Agent without changing its Agent type" {
+  tmux_test new-session -d -s other -n target -x 80 -y 24
+  show_running_codex other:target.0
+  enable_fzf_stub
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:target.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  send_hook_event other:target.0 codex result sidekick-session-1 turn-2 \
+    /tmp/nvim-sidekick
+
+  target_id=$(tmux_test display-message -p -t other:target.0 '#{pane_id}')
+  tmux_test select-pane -t other:target.0 -T 'codex'
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  case "$(<"$chooser_input")" in
+    *"$target_id"*'Needs attention · Codex · Sidekick · other:target.0'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$chooser_input")" in
+    *"$target_id"$'\t''codex |'*) false ;;
+  esac
+}
+
+@test "a hidden Sidekick Agent without hook state stays Stale with a chooser warning" {
+  tmux_test new-session -d -s other -n sidekick -x 80 -y 24
+  tmux_test new-window -d -t other: -n standalone
+  show_host_process other:sidekick.0
+  show_running_claude other:standalone.0
+  enable_fzf_stub
+  enable_nvim_stub
+  enable_process_snapshot
+  sidekick_pane_pid=$(pane_process_id other:sidekick.0)
+  standalone_pane_pid=$(pane_process_id other:standalone.0)
+  set_process_snapshot \
+    "$sidekick_pane_pid 1 bash" \
+    "91000001 $sidekick_pane_pid nvim" \
+    '91000002 91000001 codex' \
+    "$standalone_pane_pid 1 claude"
+  set_process_environment \
+    '91000002 codex NVIM=/tmp/nvim-sidekick TMUX_AGENTS_PRIVATE_TEST_VALUE=do-not-store'
+  load_plugin agents:0.0
+  printf '%s\n' hidden >"$nvim_response"
+  capture_count="$BATS_TEST_TMPDIR/sidekick-capture-count"
+  printf '%s\n' 0 >"$capture_count"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_CAPTURE_COUNT "$capture_count"
+  tmux_test run-shell "$project_root/scripts/scan.sh"
+
+  [ "$(<"$capture_count")" = '1' ]
+
+  sidekick_id=$(tmux_test display-message -p -t other:sidekick.0 '#{pane_id}')
+  standalone_id=$(tmux_test display-message -p -t other:standalone.0 '#{pane_id}')
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  expected_order=$(printf '%s\n' "$sidekick_id" "$standalone_id")
+  [ "$(cut -f1 "$chooser_input")" = "$expected_order" ]
+  case "$(<"$chooser_input")" in
+    *"$sidekick_id"*'Stale · Codex · Sidekick · hook unavailable · other:sidekick.0'*) ;;
+    *) false ;;
+  esac
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+  [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
+  case "$(all_runtime_options other:sidekick.0)" in
+    *'TMUX_AGENTS_PRIVATE_TEST_VALUE'*|*'do-not-store'*) false ;;
+  esac
+}
+
+@test "a hidden Sidekick chooser preview shows the editor pane and an open-on-selection notice" {
+  tmux_test new-session -d -s other -n sidekick -x 80 -y 24
+  show_idle_codex other:sidekick.0
+  enable_fzf_stub
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:sidekick.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  printf '%s\n' hidden >"$nvim_response"
+  : >"$nvim_args"
+
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  case "$(<"$chooser_preview")" in
+    *'Sidekick Agent is hidden; selecting it will open and focus the Agent.'*'Ask Codex to do anything'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$nvim_args")" in
+    *'--server /tmp/nvim-sidekick'*'is_open()'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$nvim_args")" in
+    *"sidekick.cli').show"*|*toggle*|*focus*|*get_lines*|*scrollback*|*transcript*) false ;;
+  esac
+  case "$(all_runtime_options other:sidekick.0)" in
+    *'Ask Codex to do anything'*) false ;;
+  esac
+}
+
+@test "an unavailable Sidekick visibility check does not claim the Agent is hidden" {
+  tmux_test new-session -d -s other -n sidekick -x 80 -y 24
+  show_idle_codex other:sidekick.0
+  enable_fzf_stub
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:sidekick.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  printf '%s\n' unavailable >"$nvim_response"
+  : >"$nvim_args"
+
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  case "$(<"$chooser_preview")" in
+    *'Sidekick visibility is unavailable; selecting the Agent will still try to open it.'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$chooser_preview")" in
+    *'Sidekick Agent is hidden'*) false ;;
+  esac
+}
+
+@test "a visible Sidekick terminal uses the ordinary live pane preview" {
+  tmux_test new-session -d -s other -n sidekick -x 80 -y 24
+  show_running_claude other:sidekick.0
+  enable_fzf_stub
+  enable_nvim_stub
+  load_plugin agents:0.0
+  send_hook_event other:sidekick.0 claude start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  : >"$nvim_args"
+
+  attach_status_client
+  load_plugin agents:0.0
+  open_chooser
+
+  case "$(<"$chooser_preview")" in
+    *'Crafting… (4s · esc to interrupt)'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$chooser_preview")" in
+    *'Sidekick Agent is hidden'*) false ;;
+  esac
+  case "$(<"$nvim_args")" in
+    *'is_open()'*) ;;
+    *) false ;;
+  esac
+}
+
 @test "lifecycle hooks move an Agent through Running, Input, Reviewable, and removal" {
   load_plugin
 
@@ -656,7 +824,7 @@ send_hook_event() {
   show_idle_codex agents:0.0
   tmux_test set-option -g status-right '#{tmux_agents}'
   refresh_count="$BATS_TEST_TMPDIR/refresh-count"
-  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
   export TMUX_AGENTS_TEST_REFRESH_COUNT="$refresh_count"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
   tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
@@ -674,7 +842,7 @@ send_hook_event() {
 @test "an ordinary scan does not capture a hook-reported Agent screen" {
   show_idle_codex agents:0.0
   capture_count="$BATS_TEST_TMPDIR/capture-count"
-  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
   export TMUX_AGENTS_TEST_CAPTURE_COUNT="$capture_count"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
   tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
@@ -709,7 +877,7 @@ send_hook_event() {
 @test "a valid hook event removes an Agent from fallback polling immediately" {
   show_idle_codex agents:0.0
   capture_count="$BATS_TEST_TMPDIR/capture-count"
-  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
   export TMUX_AGENTS_TEST_CAPTURE_COUNT="$capture_count"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
   tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
@@ -733,7 +901,7 @@ send_hook_event() {
 @test "an unchanged hook Agent scan does not redraw status options" {
   show_idle_codex agents:0.0
   set_option_count="$BATS_TEST_TMPDIR/set-option-count"
-  export TMUX_AGENTS_TEST_REAL_TMUX="$(command -v tmux)"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
   export TMUX_AGENTS_TEST_SET_OPTION_COUNT="$set_option_count"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
   tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
@@ -1133,6 +1301,37 @@ send_hook_event() {
   [ "$(<"$process_snapshot_count")" = '1' ]
 }
 
+@test "hookless Sidekick discovery batches Agent environment lookup across panes" {
+  tmux_test new-window -d -t agents: -n codex-host
+  tmux_test new-window -d -t agents: -n claude-host
+  show_host_process agents:codex-host.0
+  show_host_process agents:claude-host.0
+  enable_nvim_stub
+  enable_process_snapshot
+
+  codex_host_pid=$(pane_process_id agents:codex-host.0)
+  claude_host_pid=$(pane_process_id agents:claude-host.0)
+  set_process_snapshot \
+    "$codex_host_pid 1 bash" \
+    "93000001 $codex_host_pid nvim" \
+    '93000002 93000001 codex' \
+    "$claude_host_pid 1 bash" \
+    "94000001 $claude_host_pid nvim" \
+    '94000002 94000001 claude'
+  set_process_environment \
+    '93000002 codex NVIM=/tmp/nvim-codex' \
+    '94000002 claude NVIM=/tmp/nvim-claude'
+
+  load_plugin agents:0.0
+
+  [ "$(<"$process_snapshot_count")" = '1' ]
+  [ "$(<"$process_environment_count")" = '1' ]
+  [ "$(tmux_test show-options -pqv -t agents:codex-host.0 \
+    '@tmux_agents_nvim_server')" = '/tmp/nvim-codex' ]
+  [ "$(tmux_test show-options -pqv -t agents:claude-host.0 \
+    '@tmux_agents_nvim_server')" = '/tmp/nvim-claude' ]
+}
+
 @test "process-tree reconciliation resets replaced Agents and removes exited ones" {
   tmux_test new-window -d -t agents: -n wrapper
   show_host_process agents:wrapper.0
@@ -1370,7 +1569,7 @@ send_hook_event() {
 
   chooser_options=$(<"$chooser_args")
   case "$chooser_options" in
-    *'--preview'*'tmux capture-pane -p -e -t {1}'*) ;;
+    *'--preview='*) ;;
     *) false ;;
   esac
   case "$chooser_options" in
