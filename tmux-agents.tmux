@@ -3,6 +3,9 @@
 set -e
 
 plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [ "$(tmux show-options -gqv '@tmux_agents_plugin_root')" != "$plugin_root" ]; then
+  tmux set-option -gq '@tmux_agents_plugin_root' "$plugin_root"
+fi
 
 ensure_count() {
   option_name=$1

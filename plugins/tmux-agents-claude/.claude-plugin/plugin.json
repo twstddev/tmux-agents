@@ -1,0 +1,11 @@
+{
+  "name": "tmux-agents-claude",
+  "version": "0.1.0",
+  "description": "Reports Claude Code lifecycle state to tmux-agents.",
+  "author": {
+    "name": "twstddev",
+    "url": "https://github.com/twstddev"
+  },
+  "homepage": "https://github.com/twstddev/tmux-agents",
+  "repository": "https://github.com/twstddev/tmux-agents"
+}

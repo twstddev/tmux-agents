@@ -475,6 +475,20 @@ send_hook_event() {
   fi
 }
 
+send_plugin_hook_event() {
+  target=$1
+  plugin_name=$2
+  event_name=$3
+  session_id=$4
+  turn_id=${5:-turn-1}
+  pane_id=$(tmux_test display-message -p -t "$target" '#{pane_id}')
+  server_pid=$(tmux_test display-message -p -t "$target" '#{pid}')
+
+  printf '%s\n' "{\"session_id\":\"$session_id\",\"turn_id\":\"$turn_id\"}" |
+    TMUX="$socket_path,$server_pid,0" TMUX_PANE="$pane_id" \
+      bash "$project_root/plugins/$plugin_name/scripts/hook.sh" "$event_name"
+}
+
 run_diagnostics() {
   server_pid=$(tmux_test display-message -p '#{pid}')
   TMUX="$socket_path,$server_pid,0" "$project_root/scripts/diagnose.sh"
@@ -493,6 +507,7 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_plugin_root')" = "$project_root" ]
 }
 
 @test "loading the plugin preserves existing tmux hooks" {
@@ -526,6 +541,30 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '1' ]
+}
+
+@test "the Codex plugin delegates lifecycle events to the active tmux plugin" {
+  load_plugin
+
+  send_plugin_hook_event agents:0.0 tmux-agents-codex start codex-session-1
+  send_plugin_hook_event agents:0.0 tmux-agents-codex running \
+    codex-session-1 turn-2
+
+  [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
+  [ "$(tmux_test show-options -pqv -t agents:0.0 \
+    '@tmux_agents_state_source')" = 'hook' ]
+}
+
+@test "the Claude Code plugin delegates lifecycle events to the active tmux plugin" {
+  load_plugin
+
+  send_plugin_hook_event agents:0.0 tmux-agents-claude start claude-session-1
+  send_plugin_hook_event agents:0.0 tmux-agents-claude input \
+    claude-session-1 turn-2
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  [ "$(tmux_test show-options -pqv -t agents:0.0 \
+    '@tmux_agents_type')" = 'claude' ]
 }
 
 @test "a hook verifies an embedded Sidekick Agent before recording its host" {

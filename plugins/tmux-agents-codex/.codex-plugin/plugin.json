@@ -1,0 +1,21 @@
+{
+  "name": "tmux-agents-codex",
+  "version": "0.1.0",
+  "description": "Reports Codex lifecycle state to tmux-agents.",
+  "author": {
+    "name": "twstddev",
+    "url": "https://github.com/twstddev"
+  },
+  "homepage": "https://github.com/twstddev/tmux-agents",
+  "repository": "https://github.com/twstddev/tmux-agents",
+  "keywords": ["tmux", "codex", "status"],
+  "interface": {
+    "displayName": "tmux-agents for Codex",
+    "shortDescription": "Keep tmux Agent status in sync with Codex.",
+    "longDescription": "Bundles lifecycle hooks that report Codex state to an active tmux-agents installation.",
+    "developerName": "twstddev",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Help me verify that tmux-agents is tracking this Codex session."
+  }
+}

@@ -69,43 +69,34 @@ Lifecycle hooks are optional. When configured, a standalone Codex or Claude Code
 
 Hooks must run in a tmux pane. The hook command safely does nothing outside tmux, and it records only the Agent type, state, session and turn identifiers, and timestamps—never the hook's prompt, tool input, or conversation text.
 
-Replace `/absolute/path/to/tmux-agents` below with the directory where you installed this plugin. Add the following configuration to `~/.codex/hooks.json` for Codex:
+tmux-agents includes separate Codex and Claude Code integrations under its `plugins/` directory. The commands below assume TPM installed tmux-agents at its usual path, `~/.tmux/plugins/tmux-agents`. If you configured a different `TMUX_PLUGIN_MANAGER_PATH`, substitute that location.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex start" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex running" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex running" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex input" }] }],
-    "PreToolUse": [{ "matcher": "request_user_input", "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex input" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex result" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh codex end" }] }]
-  }
-}
+Neither integration is published to a remote or public marketplace. Both are supplied from the TPM checkout and find the active tmux-agents installation through tmux, so you do not need to copy hook JSON or edit an Agent's settings file.
+
+### Codex
+
+Codex does not currently provide a direct equivalent of Claude Code's `--plugin-dir` option. Its CLI requires a local marketplace descriptor even for a plugin already on disk. Point Codex at the TPM checkout, then install the bundled integration:
+
+```sh
+codex plugin marketplace add ~/.tmux/plugins/tmux-agents
+codex plugin add tmux-agents-codex@tmux-agents
 ```
 
-Codex requires you to review and trust non-managed command hooks before it runs them. Use `/hooks` in Codex after saving the file to review and trust these commands. tmux-agents never edits or trusts Codex configuration on your behalf.
+This registers a local filesystem source only; it does not publish or upload the integration.
 
-Add the equivalent user-wide configuration to `~/.claude/settings.json` for Claude Code:
+Start Codex, run `/hooks`, and review and trust the tmux-agents commands. Codex skips non-managed hooks until they are trusted. Start a new Codex session afterward so its session-start event is reported.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude start" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude running" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude running" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude input" }] }],
-    "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude input" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude result" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/absolute/path/to/tmux-agents/scripts/hook.sh claude end" }] }]
-  }
-}
+### Claude Code
+
+Load the Claude Code integration directly from the TPM checkout:
+
+```sh
+claude --plugin-dir ~/.tmux/plugins/tmux-agents/plugins/tmux-agents-claude
 ```
 
-Claude Code merges user hooks with project and managed configuration. Review the final hook configuration with its `/hooks` command before relying on it.
+Use the same `--plugin-dir` option whenever you start Claude Code. To make that automatic, add it to the shell alias or wrapper you already use to launch `claude`. Run `/reload-plugins` after TPM updates the integration in an existing session, and use `/hooks` to inspect the loaded lifecycle hooks.
 
-Hook registration is always manual. tmux-agents never edits either Agent's configuration and never approves or trusts hook commands for you.
+Integration setup is explicit. tmux-agents never edits hook configuration files and never approves or trusts hook commands for you.
 
 ## Diagnose tracking
 
