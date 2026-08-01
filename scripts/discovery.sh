@@ -122,3 +122,45 @@ discovery_find_nvim_server() {
       }
     '
 }
+
+discovery_find_uncontained_agents() {
+  discovery_pane_root_pids=$1
+
+  printf '%s\n' "$process_snapshot" | awk \
+    -v pane_root_pids="$discovery_pane_root_pids" '
+      BEGIN {
+        pane_root_count = split(pane_root_pids, pane_root_ids, ",")
+        for (pane_root_index = 1; pane_root_index <= pane_root_count; pane_root_index++) {
+          pane_roots[pane_root_ids[pane_root_index]] = 1
+        }
+      }
+
+      {
+        process_pid = $1
+        process_parents[process_pid] = $2
+        process_commands[process_pid] = $3
+      }
+
+      function belongs_to_pane(process_id, parent_id) {
+        if (pane_roots[process_id]) {
+          return 1
+        }
+        parent_id = process_parents[process_id]
+        if (!parent_id || parent_id == process_id) {
+          return 0
+        }
+        return belongs_to_pane(parent_id)
+      }
+
+      END {
+        for (process_id in process_commands) {
+          process_name = process_commands[process_id]
+          sub(/^.*\//, "", process_name)
+          if ((process_name == "codex" || process_name == "claude") &&
+              !belongs_to_pane(process_id)) {
+            print process_name "|" process_id
+          }
+        }
+      }
+    ' | LC_ALL=C sort -t '|' -k2,2n
+}

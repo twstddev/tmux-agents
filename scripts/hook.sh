@@ -79,6 +79,7 @@ if [ "$event_name" != 'start' ] && [ "$recorded_source" = 'hook' ] &&
 fi
 
 state_debug "hook event=$event_name pane=$hook_pane_id type=$agent_type identity=$session_identity"
+tmux set-option -pq -t "$hook_pane_id" '@tmux_agents_last_hook_at' "$(date +%s)"
 
 case "$event_name" in
 start)

@@ -28,4 +28,12 @@ if [ "$response" = 'unavailable' ]; then
   exit 0
 fi
 
+if [ "$response" = 'unsupported' ]; then
+  case "$*" in
+    *'--remote-expr 1') printf '%s\n' 1 ;;
+    *) printf '%s\n' 0 ;;
+  esac
+  exit 0
+fi
+
 printf '%s\n' "$response"

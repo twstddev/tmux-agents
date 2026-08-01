@@ -424,6 +424,11 @@ send_hook_event() {
   fi
 }
 
+run_diagnostics() {
+  server_pid=$(tmux_test display-message -p '#{pid}')
+  TMUX="$socket_path,$server_pid,0" "$project_root/scripts/diagnose.sh"
+}
+
 @test "loading the plugin is idempotent and leaves status placement alone" {
   tmux_test set-option -g status-left 'left-side'
   tmux_test set-option -g status-right 'right-side'
@@ -943,6 +948,142 @@ send_hook_event() {
   case "$debug_messages" in
     *'Ask Codex to do anything'*|*'100% left'*) false ;;
   esac
+}
+
+@test "diagnostics report a healthy hook and its last activity" {
+  show_host_process agents:0.0
+  enable_process_snapshot
+  pane_pid=$(pane_process_id agents:0.0)
+  set_process_snapshot \
+    "$pane_pid 1 bash" \
+    "91000001 $pane_pid codex"
+  load_plugin
+  send_hook_event agents:0.0 codex start codex-session-1
+  send_hook_event agents:0.0 codex running codex-session-1 turn-2
+
+  run run_diagnostics
+
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *'pane='*' type=codex process=91000001'*'hook=healthy'*\
+'last-hook-activity='*'identity=codex-session-1'*\
+'state=running source=hook fallback=inactive'*'sidekick=standalone'*) ;;
+    *) false ;;
+  esac
+  case "$output" in
+    *'Ask Codex to do anything'*|*'100% left'*) false ;;
+  esac
+}
+
+@test "diagnostics distinguish a missing startup hook from active passive fallback" {
+  show_host_process agents:0.0
+  tmux_test new-window -d -t agents: -n waiting
+  show_host_process agents:waiting.0
+  enable_process_snapshot
+  fallback_pane_pid=$(pane_process_id agents:0.0)
+  waiting_pane_pid=$(pane_process_id agents:waiting.0)
+  set_process_snapshot \
+    "$fallback_pane_pid 1 bash" \
+    "91000001 $fallback_pane_pid codex"
+  load_plugin
+  tmux_test set-option -g @tmux_agents_hook_grace_seconds 30
+  set_process_snapshot \
+    "$fallback_pane_pid 1 bash" \
+    "91000001 $fallback_pane_pid codex" \
+    "$waiting_pane_pid 1 bash" \
+    "92000001 $waiting_pane_pid claude"
+  capture_count="$BATS_TEST_TMPDIR/diagnostic-capture-count"
+  printf '%s\n' 0 >"$capture_count"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_CAPTURE_COUNT "$capture_count"
+
+  run run_diagnostics
+
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *'type=codex process=91000001 hook=missing last-hook-activity=never'*\
+'source=passive fallback=active'*) ;;
+    *) false ;;
+  esac
+  case "$output" in
+    *'type=claude process=92000001 hook=missing-startup-hook last-hook-activity=never'*\
+'state=unclassified source=grace fallback=pending'*) ;;
+    *) false ;;
+  esac
+  [ "$(<"$capture_count")" = '0' ]
+}
+
+@test "diagnostics distinguish unsupported Sidekick hosting from a stale RPC address" {
+  show_host_process agents:0.0
+  enable_nvim_stub
+  enable_process_snapshot
+  pane_pid=$(pane_process_id agents:0.0)
+  set_process_snapshot \
+    "$pane_pid 1 bash" \
+    "91000001 $pane_pid nvim" \
+    '91000002 91000001 codex'
+  set_process_environment \
+    '91000002 codex NVIM=/tmp/nvim-sidekick'
+  printf '%s\n' unsupported >"$nvim_response"
+
+  run run_diagnostics
+
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *'type=codex process=91000002'*'sidekick=unsupported-host rpc=reachable'*) ;;
+    *) false ;;
+  esac
+
+  printf '%s\n' 1 >"$nvim_response"
+
+  run run_diagnostics
+
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *'sidekick=verified rpc=reachable'*) ;;
+    *) false ;;
+  esac
+
+  send_hook_event agents:0.0 codex start sidekick-session-1 turn-1 \
+    /tmp/nvim-sidekick
+  printf '%s\n' fail >"$nvim_response"
+
+  run run_diagnostics
+
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *'hook=healthy'*\
+'sidekick=previously-verified rpc=unreachable address=possibly-stale'*) ;;
+    *) false ;;
+  esac
+  case "$(<"$nvim_args")" in
+    *get_lines*|*scrollback*|*transcript*) false ;;
+  esac
+}
+
+@test "diagnostics report an actionable Agent running outside the current tmux server" {
+  show_host_process agents:0.0
+  enable_process_snapshot
+  pane_pid=$(pane_process_id agents:0.0)
+  set_process_snapshot \
+    "$pane_pid 1 bash" \
+    '91000001 1 claude'
+
+  run run_diagnostics
+
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *'pane=none location=outside-current-tmux-server type=claude process=91000001'*\
+'state=untracked'*'reason=no-containing-pane'*\
+'action=run-in-containing-tmux-server-or-start-agent-in-tmux'*) ;;
+    *) false ;;
+  esac
+}
+
+@test "the diagnostic command explains that it must run inside tmux" {
+  run env TMUX= "$project_root/scripts/diagnose.sh"
+
+  [ "$status" -eq 1 ]
+  [ "$output" = 'tmux-agents: diagnostics must run inside tmux' ]
 }
 
 @test "a selected idle Codex Agent is Stale and counted" {

@@ -22,6 +22,24 @@ sidekick_remote_expr() {
     "$sidekick_rpc_expression" 2>/dev/null
 }
 
+sidekick_rpc_status() {
+  sidekick_server=$1
+
+  if [ -z "$sidekick_server" ]; then
+    printf '%s\n' 'address-unavailable'
+  elif ! command -v nvim >/dev/null 2>&1; then
+    printf '%s\n' 'client-unavailable'
+  elif sidekick_rpc_result=$(sidekick_remote_expr "$sidekick_server" '1'); then
+    if [ "$sidekick_rpc_result" = '1' ]; then
+      printf '%s\n' 'reachable'
+    else
+      printf '%s\n' 'unexpected-response'
+    fi
+  else
+    printf '%s\n' 'unreachable'
+  fi
+}
+
 sidekick_embedded_state_expression() {
   sidekick_query_type=$1
   sidekick_query_condition=${2-true}

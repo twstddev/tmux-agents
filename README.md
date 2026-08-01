@@ -23,6 +23,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, and a muted Stale count.
 - Opens an fzf Agent chooser with prefix + <kbd>A</kbd>. The chooser groups Agents by Needs attention, Stale, then Running; marks embedded Sidekick Agents; shows pane context and state age; previews the highlighted pane's current screen; and can switch the invoking client across sessions.
 - Jumps directly to the longest-waiting Agent that Needs attention with prefix + <kbd>a</kbd>.
+- Provides a diagnostic command for process discovery, hook registration, fallback state, and Sidekick RPC readiness without inspecting Agent conversations.
 
 ## Requirements
 
@@ -102,6 +103,22 @@ Add the equivalent user-wide configuration to `~/.claude/settings.json` for Clau
 
 Claude Code merges user hooks with project and managed configuration. Review the final hook configuration with its `/hooks` command before relying on it.
 
+Hook registration is always manual. tmux-agents never edits either Agent's configuration and never approves or trusts hook commands for you.
+
+## Diagnose tracking
+
+Run the diagnostic command from a tmux pane when an Agent is missing, stuck in fallback, or unable to reopen through Sidekick:
+
+```sh
+~/.tmux/plugins/tmux-agents/scripts/diagnose.sh
+```
+
+Use the actual installation path if you installed the plugin elsewhere. The command performs a fresh process-tree reconciliation, then prints one line for every supported Agent process with its tmux pane, Agent type and process ID, hook registration, last hook activity, identity, state source, fallback status, and Sidekick host and RPC status. An Agent without a pane in the current tmux server is reported as untracked with an action to run diagnostics in its containing server or restart it inside tmux.
+
+`hook=healthy` means the pane has a valid hook registration; `last-hook-activity` reports the last accepted event as a Unix timestamp. Silence alone never changes a hook to unhealthy because a long-running turn and a silent hook cannot be distinguished from elapsed time. `missing-startup-hook` is still in the startup grace period, while `fallback=active` means visible-screen checks are running every two seconds. Sidekick diagnostics distinguish a verified host, a reachable Neovim instance that does not expose the supported embedded Sidekick terminal, and an RPC failure whose address may be stale. They report unavailable RPC tooling and unexpected responses separately instead of assuming the address is stale.
+
+Diagnostics inspect process metadata, pane-scoped tmux options, and non-content Neovim integration state. They do not capture pane screens or request hidden terminal lines, scrollback, transcripts, prompts, or tool input.
+
 ## Debug lifecycle tracking
 
 To trace lifecycle events and scanning decisions, enable the opt-in tmux message log:
@@ -166,9 +183,11 @@ All four options are updated by hook, selection, pane-lifecycle, fallback, and r
 - Detection recognizes the current English Codex and Claude Code TUI layouts. Agents using customized, translated, or newly changed layouts are treated as Stale unless a Running or Needs attention signal is recognized.
 - Discovery follows each pane's process tree to find `codex` and `claude` descendants. One Agent is represented per pane; unsupported processes do not create an Agent entry.
 - A hook with an `NVIM` server address verifies that Sidekick owns one embedded terminal for the Agent type before recording it as a Sidekick Agent. For a hookless Agent discovered below Neovim, reconciliation reads only the Agent process's `NVIM` address from its environment and performs the same verification; other environment values are discarded and never stored. The RPC calls only inspect Sidekick host metadata and window visibility or request that terminal be shown and focused; they never read terminal lines, scrollback, or transcripts.
+- Sidekick's embedded terminal backend is represented by its containing Neovim pane. Sidekick Agents launched in external tmux windows or splits are ordinary standalone Agent panes and are not redirected through Neovim.
 - Discovery covers every pane in the current tmux server, but does not cross into a separate tmux socket server, remote host, or nested tmux instance.
 - Hook events are preferred. An Agent without hook registration receives a short grace period and then is passively checked every two seconds. A valid hook event stops that pane's fallback polling immediately.
+- A hook that registered and later becomes silent is not timed out based on age. A hidden embedded Sidekick Agent can therefore show its previous state until another hook event arrives or its integration is diagnosed; tmux-agents does not read the hidden terminal to guess a newer state.
 - The 60-second safety reconciliation catches Agent processes that ended without reporting a normal session end, so an unreported shutdown can remain visible for up to that interval. Set `@tmux_agents_safety_interval` before loading the plugin to choose another positive number of seconds.
 - Tmux pane selection acknowledges attention without waiting for a scan, and pane lifecycle events refresh the counts after a close.
 - tmux-agents does not configure lifecycle hooks, terminal bells, or either Agent CLI automatically.
-- Fallback checks capture only the visible screen grid. They do not request scrollback, read transcripts, or persist captured text. Pane-scoped metadata contains Agent type, state and transition time, attention and acknowledgment data, detector evidence, and a non-reversible screen signature. It disappears when the pane closes.
+- Fallback checks capture only the visible screen grid. They do not request scrollback, read transcripts, or persist captured text. Pane-scoped metadata contains Agent type, identity, state and transition time, last hook activity, attention and acknowledgment data, detector evidence, host integration facts, and a non-reversible screen signature. It disappears when the pane closes.
