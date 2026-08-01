@@ -6,10 +6,19 @@ discovery_capture_process_snapshot() {
   process_snapshot=$(ps -axo pid=,ppid=,comm=)
 }
 
-discovery_find_agent_descendant() {
-  discovery_root_pid=$1
+discovery_find_agent_descendants() {
+  discovery_pane_records=$1
 
-  printf '%s\n' "$process_snapshot" | awk -v root_pid="$discovery_root_pid" '
+  printf '%s\n' "$process_snapshot" | awk -v pane_records="$discovery_pane_records" '
+    BEGIN {
+      pane_count = split(pane_records, pane_lines, "\n")
+      for (pane_index = 1; pane_index <= pane_count; pane_index++) {
+        split(pane_lines[pane_index], pane_fields, "[|]")
+        pane_ids[pane_index] = pane_fields[1]
+        pane_root_pids[pane_index] = pane_fields[2]
+      }
+    }
+
     {
       process_pid = $1
       process_parent_pid = $2
@@ -39,7 +48,9 @@ discovery_find_agent_descendant() {
 
       type = agent_type(process_id)
       if (type != "") {
-        printf "%s|pid:%s|%s\n", type, process_id, nvim_process_id
+        found_type = type
+        found_process_id = process_id
+        found_nvim_process_id = nvim_process_id
         return 1
       }
 
@@ -53,7 +64,20 @@ discovery_find_agent_descendant() {
       return 0
     }
 
-    END { find_descendant(root_pid) }
+    END {
+      for (pane_index = 1; pane_index <= pane_count; pane_index++) {
+        found_type = ""
+        found_process_id = ""
+        found_nvim_process_id = ""
+        find_descendant(pane_root_pids[pane_index], "")
+        if (found_type == "") {
+          printf "%s|||\n", pane_ids[pane_index]
+        } else {
+          printf "%s|%s|pid:%s|%s\n", pane_ids[pane_index], found_type,
+            found_process_id, found_nvim_process_id
+        }
+      }
+    }
   '
 }
 

@@ -10,16 +10,10 @@ selected_pane=${1-}
 . "$plugin_root/scripts/state.sh"
 
 state_begin_reconciliation
-while IFS= read -r pane_id; do
-  pane_state=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state')
-  pane_type=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_type')
-  pane_source=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state_source')
-  pane_identity=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_identity')
-  pane_evidence=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_evidence')
-  attention_evidence=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_attention_evidence')
-  attention_signature=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')
-  acknowledged_signature=$(tmux show-options -pqv -t "$pane_id" \
-    '@tmux_agents_acknowledged_signature')
+while IFS='|' read -r pane_id pane_state pane_type pane_source pane_identity \
+  _pane_process_identity pane_evidence _pane_state_since attention_evidence \
+  attention_signature acknowledged_signature _fallback_after _pane_host \
+  _pane_nvim_server; do
 
   [ "$pane_state" = 'attention' ] || continue
   [ -n "$pane_type" ] || continue
@@ -27,18 +21,24 @@ while IFS= read -r pane_id; do
   if [ "$pane_id" = "$selected_pane" ]; then
     case "$attention_evidence" in
     input)
-      state_apply_event acknowledge "$pane_id" "$pane_type" 'attention' 'input' \
+      state_apply_event_if_current "$pane_id" "$pane_source" "$pane_identity" \
+        "$pane_state" "$attention_signature" "$acknowledged_signature" \
+        acknowledge "$pane_id" "$pane_type" 'attention' 'input' \
         "$attention_signature" "$pane_source" "$pane_identity" "$pane_evidence"
       ;;
     result)
-      state_apply_event acknowledge "$pane_id" "$pane_type" 'stale' 'result' \
+      state_apply_event_if_current "$pane_id" "$pane_source" "$pane_identity" \
+        "$pane_state" "$attention_signature" "$acknowledged_signature" \
+        acknowledge "$pane_id" "$pane_type" 'stale' 'result' \
         "$attention_signature" "$pane_source" "$pane_identity" "$pane_evidence"
       ;;
     esac
   elif [ "$attention_evidence" = 'input' ] &&
     [ "$acknowledged_signature" = "$attention_signature" ]; then
-    state_apply_event transition "$pane_id" "$pane_type" 'attention' 'input' \
+    state_apply_event_if_current "$pane_id" "$pane_source" "$pane_identity" \
+      "$pane_state" "$attention_signature" "$acknowledged_signature" \
+      transition "$pane_id" "$pane_type" 'attention' 'input' \
       "$attention_signature" '' "$pane_source" "$pane_identity" "$pane_evidence"
   fi
-done < <(tmux list-panes -a -F '#{pane_id}')
+done < <(pane_tracking_snapshot)
 state_end_reconciliation

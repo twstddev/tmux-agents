@@ -52,11 +52,11 @@ fi
 tmux bind-key "$jump_key" run-shell -b \
   "\"$plugin_root/scripts/jump.sh\" '#{client_name}' '#{pane_id}'"
 
-tmux set-hook after-select-pane \
+tmux set-hook -g 'after-select-pane[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/selection.sh\\\" '#{pane_id}'\""
-tmux set-hook after-select-window \
+tmux set-hook -g 'after-select-window[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/selection.sh\\\" '#{pane_id}'\""
-tmux set-hook pane-exited \
+tmux set-hook -g 'pane-exited[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/lifecycle.sh\\\"\""
 
 "$plugin_root/scripts/reconcile.sh"

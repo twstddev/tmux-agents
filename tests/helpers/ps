@@ -2,6 +2,12 @@
 
 set -e
 
+if [ -n "${TMUX_AGENTS_TEST_FAIL_PS_ONCE-}" ] &&
+  [ ! -f "${TMUX_AGENTS_TEST_FAIL_PS_ONCE}" ]; then
+  : >"$TMUX_AGENTS_TEST_FAIL_PS_ONCE"
+  exit 1
+fi
+
 if [ -z "${TMUX_AGENTS_TEST_PROCESS_SNAPSHOT-}" ]; then
   PATH=/usr/bin:/bin command ps "$@"
   exit 0

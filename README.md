@@ -9,6 +9,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Discovers `codex` and `claude` processes anywhere below a pane across all sessions, windows, and panes in the current tmux server.
 - Recognizes Agents below ordinary wrapper and editor processes while ignoring panes with no supported Agent process.
 - Uses lifecycle hooks as the preferred source of state and updates the status immediately when a hook arrives.
+- Coexists with existing tmux pane-selection and pane-exit hooks instead of replacing them.
 - Gives a newly discovered Agent a short hook grace period, then checks only hook-unavailable panes every two seconds using their visible screen.
 - Reconciles the process tree when the plugin loads, before chooser and jump navigation, and as a 60-second safety check. The interval is configurable with `@tmux_agents_safety_interval`.
 - Inspects only fallback panes' visible screens; it does not read scrollback or save captured text.

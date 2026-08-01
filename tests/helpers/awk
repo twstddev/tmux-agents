@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [ -n "${TMUX_AGENTS_TEST_AWK_LOG-}" ]; then
+  printf '%s\n' awk >>"$TMUX_AGENTS_TEST_AWK_LOG"
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_REAL_AWK-}" ]; then
+  exec "$TMUX_AGENTS_TEST_REAL_AWK" "$@"
+fi
+
+PATH=/usr/bin:/bin exec awk "$@"

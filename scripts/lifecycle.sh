@@ -8,4 +8,4 @@ plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=state.sh
 . "$plugin_root/scripts/state.sh"
 
-state_refresh
+state_refresh_safely

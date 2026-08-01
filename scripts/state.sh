@@ -2,6 +2,19 @@
 
 # Shared pane-state boundary. Callers supply event evidence, never screen text.
 
+state_script_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=panes.sh
+. "$state_script_root/scripts/panes.sh"
+
+state_with_lock() (
+  state_lock_acquired=0
+  trap '[ "$state_lock_acquired" -eq 0 ] || tmux wait-for -U tmux-agents-state >/dev/null 2>&1 || true' EXIT
+  tmux wait-for -L tmux-agents-state
+  state_lock_acquired=1
+  "$@"
+)
+
 state_debug() {
   state_debug_message=$1
 
@@ -68,7 +81,7 @@ state_remove_agent() {
   state_clear_host_metadata "$state_pane_id"
 }
 
-state_register_discovered_agent() {
+state_register_discovered_agent_unlocked() {
   state_pane_id=$1
   state_agent_type=$2
   state_process_identity=$3
@@ -101,6 +114,10 @@ state_register_discovered_agent() {
   tmux set-option -pq -t "$state_pane_id" '@tmux_agents_fallback_after' \
     "$(( $(date +%s) + state_grace_seconds ))"
   state_debug "discover pane=$state_pane_id type=$state_agent_type identity=$state_process_identity"
+}
+
+state_register_discovered_agent() {
+  state_with_lock state_register_discovered_agent_unlocked "$@"
 }
 
 state_record_process_identity() {
@@ -148,10 +165,38 @@ state_transition_agent() {
   state_source=${7-passive}
   state_identity=${8-}
   state_evidence=${9-}
-  previous_state=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_state')
-  previous_attention_signature=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_attention_signature')
-  previous_acknowledged_signature=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_acknowledged_signature')
-  previous_identity=$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_identity')
+  previous_record=$(tmux display-message -p -t "$state_pane_id" \
+    '#{@tmux_agents_state}|#{@tmux_agents_attention_evidence}|#{@tmux_agents_attention_signature}|#{@tmux_agents_acknowledged_signature}|#{@tmux_agents_identity}|#{@tmux_agents_type}|#{@tmux_agents_state_source}|#{@tmux_agents_evidence}|#{@tmux_agents_fallback_after}')
+  IFS='|' read -r previous_state previous_attention_evidence \
+    previous_attention_signature previous_acknowledged_signature \
+    previous_identity previous_type previous_source previous_evidence \
+    previous_fallback_after <<EOF
+$previous_record
+EOF
+  desired_identity=$previous_identity
+  if [ -n "$state_identity" ]; then
+    desired_identity=$state_identity
+  fi
+  desired_attention_evidence=
+  desired_attention_signature=
+  desired_acknowledged_signature=
+  if [ -n "$state_attention_evidence" ] && [ -n "$state_attention_signature" ]; then
+    desired_attention_evidence=$state_attention_evidence
+    desired_attention_signature=$state_attention_signature
+    desired_acknowledged_signature=$state_acknowledged_signature
+  fi
+
+  if [ "$previous_state" = "$state_next" ] &&
+    [ "$previous_attention_evidence" = "$desired_attention_evidence" ] &&
+    [ "$previous_attention_signature" = "$desired_attention_signature" ] &&
+    [ "$previous_acknowledged_signature" = "$desired_acknowledged_signature" ] &&
+    [ "$previous_identity" = "$desired_identity" ] &&
+    [ "$previous_type" = "$state_agent_type" ] &&
+    [ "$previous_source" = "$state_source" ] &&
+    [ "$previous_evidence" = "$state_evidence" ] &&
+    [ -z "$previous_fallback_after" ]; then
+    return 0
+  fi
 
   if [ "$previous_state" != "$state_next" ] ||
     { [ -n "$state_identity" ] && [ "$previous_identity" != "$state_identity" ]; }; then
@@ -203,7 +248,7 @@ state_acknowledge_agent() {
   state_transition_agent "$1" "$2" "$3" "$4" "$5" "$5" "$6" "$7" "$8"
 }
 
-state_apply_event() {
+state_apply_event_unlocked() {
   state_event=$1
   shift
 
@@ -219,13 +264,48 @@ state_apply_event() {
   fi
 }
 
+state_apply_event() {
+  state_with_lock state_apply_event_unlocked "$@"
+}
+
+state_apply_event_if_current_unlocked() {
+  state_expected_pane_id=$1
+  state_expected_source=$2
+  state_expected_identity=$3
+  state_expected_state=$4
+  state_expected_attention_signature=$5
+  state_expected_acknowledged_signature=$6
+  shift 6
+  state_current_record=$(tmux display-message -p -t "$state_expected_pane_id" \
+    '#{@tmux_agents_state_source}|#{@tmux_agents_identity}|#{@tmux_agents_state}|#{@tmux_agents_attention_signature}|#{@tmux_agents_acknowledged_signature}')
+  IFS='|' read -r state_current_source state_current_identity \
+    state_current_state state_current_attention_signature \
+    state_current_acknowledged_signature <<EOF
+$state_current_record
+EOF
+
+  if [ "$state_current_source" != "$state_expected_source" ] ||
+    [ "$state_current_identity" != "$state_expected_identity" ] ||
+    [ "$state_current_state" != "$state_expected_state" ] ||
+    [ "$state_current_attention_signature" != "$state_expected_attention_signature" ] ||
+    [ "$state_current_acknowledged_signature" != "$state_expected_acknowledged_signature" ]; then
+    return 0
+  fi
+
+  state_apply_event_unlocked "$@"
+}
+
+state_apply_event_if_current() {
+  state_with_lock state_apply_event_if_current_unlocked "$@"
+}
+
 state_begin_reconciliation() {
   tmux_agents_state_batching=1
 }
 
 state_end_reconciliation() {
   tmux_agents_state_batching=0
-  state_refresh
+  state_with_lock state_refresh
 }
 
 state_refresh_counts() {
@@ -234,15 +314,15 @@ state_refresh_counts() {
   state_stale_count=0
   state_total_count=0
 
-  while IFS= read -r state_pane_id; do
-    case "$(tmux show-options -pqv -t "$state_pane_id" '@tmux_agents_state')" in
+  while IFS='|' read -r state_pane_id state_pane_state _state_pane_fields; do
+    case "$state_pane_state" in
       attention) state_attention_count=$((state_attention_count + 1)) ;;
       running) state_running_count=$((state_running_count + 1)) ;;
       stale) state_stale_count=$((state_stale_count + 1)) ;;
       *) continue ;;
     esac
     state_total_count=$((state_total_count + 1))
-  done < <(tmux list-panes -a -F '#{pane_id}')
+  done < <(pane_tracking_snapshot)
 
   state_set_global_option '@tmux_agents_count_attention' "$state_attention_count"
   state_set_global_option '@tmux_agents_count_running' "$state_running_count"
@@ -285,4 +365,8 @@ state_refresh() {
   state_refresh_counts
   state_render_status
   tmux refresh-client -S 2>/dev/null || true
+}
+
+state_refresh_safely() {
+  state_with_lock state_refresh
 }

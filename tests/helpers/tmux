@@ -4,6 +4,17 @@ set -e
 
 : "${TMUX_AGENTS_TEST_REAL_TMUX:?}"
 
+if [ -n "${TMUX_AGENTS_TEST_COMMAND_LOG-}" ]; then
+  printf '%s\n' "${1-}" >>"$TMUX_AGENTS_TEST_COMMAND_LOG"
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_FAIL_COMMAND_ONCE-}" ] &&
+  [ "${1-}" = "$TMUX_AGENTS_TEST_FAIL_COMMAND_ONCE" ] &&
+  [ ! -f "${TMUX_AGENTS_TEST_FAILURE_MARKER-}" ]; then
+  : >"$TMUX_AGENTS_TEST_FAILURE_MARKER"
+  exit 1
+fi
+
 if [ -n "${TMUX_AGENTS_TEST_INITIAL_SCAN_STARTED-}" ] &&
   [ ! -f "${TMUX_AGENTS_TEST_INITIAL_SCAN_DONE-}" ] &&
   [ "${1-}" = 'list-panes' ]; then
@@ -43,6 +54,14 @@ if [ -n "${TMUX_AGENTS_TEST_CAPTURE_COUNT-}" ] &&
   printf '%s\n' "$((capture_count + 1))" >"$TMUX_AGENTS_TEST_CAPTURE_COUNT"
 fi
 
+if [ -n "${TMUX_AGENTS_TEST_CAPTURE_STARTED-}" ] &&
+  [ "${1-}" = 'capture-pane' ]; then
+  : >"$TMUX_AGENTS_TEST_CAPTURE_STARTED"
+  while [ ! -f "${TMUX_AGENTS_TEST_CAPTURE_RELEASE-}" ]; do
+    sleep 0.01
+  done
+fi
+
 if [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ] &&
   [ "${1-}" = 'set-option' ]; then
   set_option_count=0
@@ -50,6 +69,20 @@ if [ -n "${TMUX_AGENTS_TEST_SET_OPTION_COUNT-}" ] &&
     set_option_count=$(<"$TMUX_AGENTS_TEST_SET_OPTION_COUNT")
   fi
   printf '%s\n' "$((set_option_count + 1))" >"$TMUX_AGENTS_TEST_SET_OPTION_COUNT"
+fi
+
+if [ -n "${TMUX_AGENTS_TEST_PANE_SET_OPTION_COUNT-}" ] &&
+  [ "${1-}" = 'set-option' ]; then
+  for option_argument in "$@"; do
+    case "$option_argument" in
+    -*p*)
+      pane_set_option_count=$(<"$TMUX_AGENTS_TEST_PANE_SET_OPTION_COUNT")
+      printf '%s\n' "$((pane_set_option_count + 1))" \
+        >"$TMUX_AGENTS_TEST_PANE_SET_OPTION_COUNT"
+      break
+      ;;
+    esac
+  done
 fi
 
 exec "$TMUX_AGENTS_TEST_REAL_TMUX" "$@"

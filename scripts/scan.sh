@@ -79,20 +79,14 @@ screen_shows_input_request() {
   '
 }
 
-while IFS= read -r pane_id; do
-  pane_state=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state')
-  pane_attention_evidence=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_attention_evidence')
-  pane_attention_signature=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_attention_signature')
-  pane_acknowledged_signature=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_acknowledged_signature')
-  pane_state_source=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_state_source')
-  pane_identity=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_identity')
-  pane_type=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_type')
-  pane_host=$(tmux show-options -pqv -t "$pane_id" '@tmux_agents_host')
+while IFS='|' read -r pane_id pane_state pane_type pane_state_source \
+  pane_identity _pane_process_identity _pane_evidence _pane_state_since \
+  pane_attention_evidence pane_attention_signature pane_acknowledged_signature \
+  fallback_after pane_host pane_nvim_server; do
+  pane_observed_source=$pane_state_source
 
   case "$pane_state_source" in
   grace)
-    fallback_after=$(tmux show-options -pqv -t "$pane_id" \
-      '@tmux_agents_fallback_after')
     case "$fallback_after" in
     '' | *[!0-9]*) continue ;;
     esac
@@ -100,9 +94,6 @@ while IFS= read -r pane_id; do
       continue
     fi
     pane_state_source='passive'
-    tmux set-option -pq -t "$pane_id" '@tmux_agents_state_source' 'passive'
-    tmux set-option -puq -t "$pane_id" '@tmux_agents_fallback_after' \
-      2>/dev/null || true
     ;;
   passive) ;;
   *) continue ;;
@@ -112,22 +103,27 @@ while IFS= read -r pane_id; do
     codex) prompt_marker='›' ;;
     claude) prompt_marker='❯' ;;
     *)
-      state_apply_event remove "$pane_id"
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" remove "$pane_id"
       continue
       ;;
   esac
 
   if [ "$pane_host" = 'sidekick' ]; then
-    pane_nvim_server=$(tmux show-options -pqv -t "$pane_id" \
-      '@tmux_agents_nvim_server')
     if ! sidekick_visibility=$(sidekick_terminal_visibility "$pane_type" \
       "$pane_nvim_server"); then
-      state_apply_event transition "$pane_id" "$pane_type" 'stale' '' '' '' \
-        'passive' "$pane_identity" 'sidekick-visibility-unavailable'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        'stale' '' '' '' 'passive' "$pane_identity" \
+        'sidekick-visibility-unavailable'
       continue
     elif [ "$sidekick_visibility" = 'hidden' ]; then
-      state_apply_event transition "$pane_id" "$pane_type" 'stale' '' '' '' \
-        'passive' "$pane_identity" 'hidden-sidekick'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        'stale' '' '' '' 'passive' "$pane_identity" 'hidden-sidekick'
       continue
     fi
   fi
@@ -137,15 +133,23 @@ while IFS= read -r pane_id; do
 
   if printf '%s\n' "$current_screen" | screen_shows_input_request "$pane_type"; then
     if [ "$pane_acknowledged_signature" = "$current_screen_signature" ]; then
-      state_apply_event acknowledge "$pane_id" "$pane_type" 'attention' 'input' \
-        "$current_screen_signature" 'passive' "$pane_identity" 'input'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" acknowledge "$pane_id" "$pane_type" \
+        'attention' 'input' "$current_screen_signature" 'passive' \
+        "$pane_identity" 'input'
     else
-      state_apply_event transition "$pane_id" "$pane_type" 'attention' 'input' \
-        "$current_screen_signature" '' 'passive' "$pane_identity" 'input'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        'attention' 'input' "$current_screen_signature" '' 'passive' \
+        "$pane_identity" 'input'
     fi
   elif printf '%s\n' "$current_screen" | screen_shows_running "$pane_type"; then
-    state_apply_event transition "$pane_id" "$pane_type" 'running' '' '' '' \
-      'passive' "$pane_identity" 'running'
+    state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+      "$pane_identity" "$pane_state" "$pane_attention_signature" \
+      "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+      'running' '' '' '' 'passive' "$pane_identity" 'running'
   elif printf '%s\n' "$current_screen" | awk -v prompt_marker="$prompt_marker" '
     $0 ~ "^[[:space:]]*" prompt_marker { prompt_line = NR }
     /[^[:space:]]/ { last_nonblank_line = NR }
@@ -156,24 +160,36 @@ while IFS= read -r pane_id; do
     }
   '; then
     if [ "$pane_state" = 'running' ]; then
-      state_apply_event transition "$pane_id" "$pane_type" 'attention' 'result' \
-        "$current_screen_signature" '' 'passive' "$pane_identity" 'result'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        'attention' 'result' "$current_screen_signature" '' 'passive' \
+        "$pane_identity" 'result'
     elif [ "$pane_attention_evidence" = 'input' ] &&
       [ "$pane_attention_signature" != "$current_screen_signature" ]; then
-      state_apply_event transition "$pane_id" "$pane_type" 'attention' 'result' \
-        "$current_screen_signature" '' 'passive' "$pane_identity" 'result'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        'attention' 'result' "$current_screen_signature" '' 'passive' \
+        "$pane_identity" 'result'
     elif [ -z "$pane_state" ]; then
-      state_apply_event transition "$pane_id" "$pane_type" 'stale' '' '' '' \
-        'passive' "$pane_identity" 'idle'
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        'stale' '' '' '' 'passive' "$pane_identity" 'idle'
     else
-      state_apply_event transition "$pane_id" "$pane_type" "$pane_state" \
-        "$pane_attention_evidence" "$pane_attention_signature" \
+      state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+        "$pane_identity" "$pane_state" "$pane_attention_signature" \
+        "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+        "$pane_state" "$pane_attention_evidence" "$pane_attention_signature" \
         "$pane_acknowledged_signature" 'passive' "$pane_identity" 'idle'
     fi
   else
-    state_apply_event transition "$pane_id" "$pane_type" 'stale' '' '' '' \
-      'passive' "$pane_identity" 'unmatched-screen'
+    state_apply_event_if_current "$pane_id" "$pane_observed_source" \
+      "$pane_identity" "$pane_state" "$pane_attention_signature" \
+      "$pane_acknowledged_signature" transition "$pane_id" "$pane_type" \
+      'stale' '' '' '' 'passive' "$pane_identity" 'unmatched-screen'
   fi
-done < <(tmux list-panes -a -F '#{pane_id}')
+done < <(pane_tracking_snapshot)
 
 state_end_reconciliation

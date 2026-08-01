@@ -3,6 +3,7 @@
 setup() {
   project_root=$(cd "$BATS_TEST_DIRNAME/.." && pwd)
   real_tmux=$(command -v tmux)
+  real_awk=$(command -v awk)
   socket_path="$BATS_TEST_TMPDIR/tmux.sock"
   test_bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$test_bin"
@@ -12,7 +13,9 @@ setup() {
   cp "$project_root/tests/helpers/fzf" "$test_bin/fzf"
   cp "$project_root/tests/helpers/nvim" "$test_bin/nvim"
   cp "$project_root/tests/helpers/tmux" "$test_bin/tmux"
-  chmod +x "$test_bin/ps" "$test_bin/fzf" "$test_bin/nvim" "$test_bin/tmux"
+  cp "$project_root/tests/helpers/awk" "$test_bin/awk"
+  chmod +x "$test_bin/ps" "$test_bin/fzf" "$test_bin/nvim" "$test_bin/tmux" \
+    "$test_bin/awk"
 
   tmux_test new-session -d -s agents -x 80 -y 24
   tmux_test set-option -g remain-on-exit on
@@ -20,6 +23,9 @@ setup() {
 }
 
 teardown() {
+  if [ -n "${capture_release-}" ]; then
+    : >"$capture_release"
+  fi
   tmux_test kill-server >/dev/null 2>&1 || true
   if [ -n "${status_client_pid:-}" ]; then
     exec 9>&-
@@ -375,6 +381,7 @@ enable_process_snapshot() {
   : >"$process_environment"
   printf '%s\n' 0 >"$process_environment_count"
   export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
+  export TMUX_AGENTS_TEST_REAL_AWK="$real_awk"
   export TMUX_AGENTS_TEST_PROCESS_SNAPSHOT="$process_snapshot"
   export TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT="$process_snapshot_count"
   export TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT="$process_environment"
@@ -382,11 +389,35 @@ enable_process_snapshot() {
   export PATH="$test_bin:$PATH"
   tmux_test set-environment -g PATH "$test_bin:$PATH"
   tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$TMUX_AGENTS_TEST_REAL_TMUX"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_AWK "$TMUX_AGENTS_TEST_REAL_AWK"
   tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_SNAPSHOT "$process_snapshot"
   tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_SNAPSHOT_COUNT "$process_snapshot_count"
   tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT "$process_environment"
   tmux_test set-environment -g TMUX_AGENTS_TEST_PROCESS_ENVIRONMENT_COUNT \
     "$process_environment_count"
+}
+
+enable_tmux_command_log() {
+  tmux_command_log="$BATS_TEST_TMPDIR/tmux-command-log"
+  : >"$tmux_command_log"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
+  export TMUX_AGENTS_TEST_COMMAND_LOG="$tmux_command_log"
+  export PATH="$test_bin:$PATH"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$real_tmux"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_COMMAND_LOG "$tmux_command_log"
+}
+
+record_passive_codex() {
+  target=$1
+  pane_id=$(tmux_test display-message -p -t "$target" '#{pane_id}')
+  pane_pid=$(pane_process_id "$target")
+  tmux_test set-option -pq -t "$target" '@tmux_agents_type' codex
+  tmux_test set-option -pq -t "$target" '@tmux_agents_identity' "pid:$pane_pid"
+  tmux_test set-option -pq -t "$target" '@tmux_agents_process_identity' "pid:$pane_pid"
+  tmux_test set-option -pq -t "$target" '@tmux_agents_state_source' passive
+  tmux_test set-option -pq -t "$target" '@tmux_agents_state' stale
+  tmux_test set-option -pq -t "$target" '@tmux_agents_state_since' 1
 }
 
 set_process_snapshot() {
@@ -442,6 +473,28 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "loading the plugin preserves existing tmux hooks" {
+  existing_hook='set-option -g @tmux_agents_test_existing_hook 1'
+  tmux_test set-hook -g after-select-pane "$existing_hook"
+  tmux_test set-hook -g after-select-window "$existing_hook"
+  tmux_test set-hook -g pane-exited "$existing_hook"
+
+  load_plugin
+
+  case "$(tmux_test show-hooks -g after-select-pane)" in
+    *"$existing_hook"*selection.sh*) ;;
+    *) false ;;
+  esac
+  case "$(tmux_test show-hooks -g after-select-window)" in
+    *"$existing_hook"*selection.sh*) ;;
+    *) false ;;
+  esac
+  case "$(tmux_test show-hooks -g pane-exited)" in
+    *"$existing_hook"*lifecycle.sh*) ;;
+    *) false ;;
+  esac
 }
 
 @test "a session-start hook registers a standalone Codex Agent as Stale" {
@@ -863,6 +916,32 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
 }
 
+@test "a passive scan cannot overwrite a newer hook event" {
+  show_idle_codex agents:0.0
+  record_passive_codex agents:0.0
+  capture_started="$BATS_TEST_TMPDIR/capture-started"
+  capture_release="$BATS_TEST_TMPDIR/capture-release"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
+  export TMUX_AGENTS_TEST_CAPTURE_STARTED="$capture_started"
+  export TMUX_AGENTS_TEST_CAPTURE_RELEASE="$capture_release"
+  export PATH="$test_bin:$PATH"
+  server_pid=$(tmux_test display-message -p '#{pid}')
+  pane_id=$(tmux_test display-message -p -t agents:0.0 '#{pane_id}')
+
+  TMUX="$socket_path,$server_pid,0" \
+    "$project_root/scripts/scan.sh" &
+  scan_pid=$!
+  retry_until 100 test -f "$capture_started"
+
+  send_hook_event agents:0.0 codex result codex-session-1 turn-2
+  : >"$capture_release"
+  wait "$scan_pid"
+
+  [ "$(tmux_test show-options -pqv -t "$pane_id" \
+    '@tmux_agents_state_source')" = hook ]
+  pane_state_is "$pane_id" attention
+}
+
 @test "a discovered Agent waits for the default hook grace before passive fallback" {
   show_idle_codex agents:0.0
   tmux_test set-option -gu @tmux_agents_hook_grace_seconds
@@ -901,6 +980,67 @@ run_diagnostics() {
   load_plugin agents:0.0
 
   [ "$(tmux_test show-options -gqv '@tmux_agents_safety_scheduled')" = '1' ]
+}
+
+@test "fallback polling rearms after a transient scan failure" {
+  show_idle_codex agents:0.0
+  record_passive_codex agents:0.0
+  enable_tmux_command_log
+  failure_marker="$BATS_TEST_TMPDIR/capture-failed"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FAIL_COMMAND_ONCE capture-pane
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FAILURE_MARKER "$failure_marker"
+  tmux_test set-option -g @tmux_agents_fallback_scheduled 1
+
+  tmux_test run-shell "$project_root/scripts/schedule.sh run-fallback"
+
+  [ -f "$failure_marker" ]
+  [ "$(tmux_test show-options -gqv '@tmux_agents_fallback_scheduled')" = 1 ]
+}
+
+@test "safety reconciliation rearms after a transient process snapshot failure" {
+  enable_process_snapshot
+  failure_marker="$BATS_TEST_TMPDIR/ps-failed"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_FAIL_PS_ONCE "$failure_marker"
+  tmux_test set-option -g @tmux_agents_safety_scheduled 1
+
+  tmux_test run-shell "$project_root/scripts/schedule.sh run-safety"
+
+  [ -f "$failure_marker" ]
+  [ "$(tmux_test show-options -gqv '@tmux_agents_safety_scheduled')" = 1 ]
+}
+
+@test "fallback polling uses bounded tmux queries as unrelated panes grow" {
+  show_idle_codex agents:0.0
+  record_passive_codex agents:0.0
+  pane_number=0
+  while [ "$pane_number" -lt 12 ]; do
+    tmux_test new-window -d -t agents: -n "unrelated-$pane_number"
+    pane_number=$((pane_number + 1))
+  done
+  enable_tmux_command_log
+
+  tmux_test run-shell "$project_root/scripts/scan.sh"
+
+  show_option_count=$(grep -c '^show-options$' "$tmux_command_log")
+  [ "$show_option_count" -le 16 ]
+}
+
+@test "an unchanged passive scan does not rewrite pane options" {
+  show_idle_codex agents:0.0
+  record_passive_codex agents:0.0
+  tmux_test set-option -pq -t agents:0.0 '@tmux_agents_evidence' idle
+  pane_set_option_count="$BATS_TEST_TMPDIR/pane-set-option-count"
+  printf '%s\n' 0 >"$pane_set_option_count"
+  export TMUX_AGENTS_TEST_REAL_TMUX="$real_tmux"
+  export TMUX_AGENTS_TEST_PANE_SET_OPTION_COUNT="$pane_set_option_count"
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$real_tmux"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_PANE_SET_OPTION_COUNT \
+    "$pane_set_option_count"
+
+  tmux_test run-shell "$project_root/scripts/scan.sh"
+
+  [ "$(<"$pane_set_option_count")" = 0 ]
 }
 
 @test "an unchanged hook Agent scan does not redraw status options" {
@@ -1440,6 +1580,27 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
   [ "$(<"$process_snapshot_count")" = '1' ]
+}
+
+@test "process-tree discovery parses its shared snapshot once for all panes" {
+  pane_number=0
+  while [ "$pane_number" -lt 8 ]; do
+    tmux_test new-window -d -t agents: -n "shell-$pane_number"
+    pane_number=$((pane_number + 1))
+  done
+  enable_process_snapshot
+  : >"$process_snapshot"
+  while IFS= read -r pane_pid; do
+    printf '%s 1 bash\n' "$pane_pid" >>"$process_snapshot"
+  done < <(tmux_test list-panes -a -F '#{pane_pid}')
+  awk_log="$BATS_TEST_TMPDIR/awk-log"
+  : >"$awk_log"
+  export TMUX_AGENTS_TEST_AWK_LOG="$awk_log"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_AWK_LOG "$awk_log"
+
+  tmux_test run-shell "$project_root/scripts/reconcile.sh"
+
+  [ "$(wc -l <"$awk_log" | tr -d ' ')" = 1 ]
 }
 
 @test "hookless Sidekick discovery batches Agent environment lookup across panes" {

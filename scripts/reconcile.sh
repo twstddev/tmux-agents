@@ -27,9 +27,9 @@ esac
 
 state_begin_reconciliation
 discovery_capture_process_snapshot
-reconciliation_records=
 nvim_agent_pids=
 pane_root_pids=
+pane_records=$(tmux list-panes -a -F '#{pane_id}|#{pane_pid}')
 
 while IFS='|' read -r pane_id pane_pid; do
   if [ -z "$pane_root_pids" ]; then
@@ -37,31 +37,23 @@ while IFS='|' read -r pane_id pane_pid; do
   else
     pane_root_pids="$pane_root_pids,$pane_pid"
   fi
-  discovered_agent=$(discovery_find_agent_descendant "$pane_pid")
-  if [ -z "$discovered_agent" ]; then
-    reconciliation_record="$pane_id|||"
-  else
-    IFS='|' read -r agent_type process_identity nvim_process_id <<EOF
-$discovered_agent
+done <<EOF
+$pane_records
 EOF
-    reconciliation_record="$pane_id|$agent_type|$process_identity|$nvim_process_id"
-    if [ -n "$nvim_process_id" ]; then
-      agent_pid=${process_identity#pid:}
-      if [ -z "$nvim_agent_pids" ]; then
-        nvim_agent_pids=$agent_pid
-      else
-        nvim_agent_pids="$nvim_agent_pids,$agent_pid"
-      fi
+
+reconciliation_records=$(discovery_find_agent_descendants "$pane_records")
+while IFS='|' read -r _pane_id _agent_type process_identity nvim_process_id; do
+  if [ -n "$nvim_process_id" ]; then
+    agent_pid=${process_identity#pid:}
+    if [ -z "$nvim_agent_pids" ]; then
+      nvim_agent_pids=$agent_pid
+    else
+      nvim_agent_pids="$nvim_agent_pids,$agent_pid"
     fi
   fi
-
-  if [ -z "$reconciliation_records" ]; then
-    reconciliation_records=$reconciliation_record
-  else
-    reconciliation_records="$reconciliation_records
-$reconciliation_record"
-  fi
-done < <(tmux list-panes -a -F '#{pane_id}|#{pane_pid}')
+done <<EOF
+$reconciliation_records
+EOF
 
 discovery_capture_agent_environments "$nvim_agent_pids"
 
