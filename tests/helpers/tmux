@@ -8,6 +8,10 @@ if [ -n "${TMUX_AGENTS_TEST_COMMAND_LOG-}" ]; then
   printf '%s\n' "${1-}" >>"$TMUX_AGENTS_TEST_COMMAND_LOG"
 fi
 
+if [ -n "${TMUX_AGENTS_TEST_COMMAND_DELAY-}" ]; then
+  sleep "$TMUX_AGENTS_TEST_COMMAND_DELAY"
+fi
+
 if [ -n "${TMUX_AGENTS_TEST_FAIL_COMMAND_ONCE-}" ] &&
   [ "${1-}" = "$TMUX_AGENTS_TEST_FAIL_COMMAND_ONCE" ] &&
   [ ! -f "${TMUX_AGENTS_TEST_FAILURE_MARKER-}" ]; then

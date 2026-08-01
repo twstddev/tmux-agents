@@ -29,13 +29,18 @@ state_begin_reconciliation
 discovery_capture_process_snapshot
 nvim_agent_pids=
 pane_root_pids=
-pane_records=$(tmux list-panes -a -F '#{pane_id}|#{pane_pid}')
+tracked_pane_ids='|'
+pane_records=$(tmux list-panes -a \
+  -F '#{pane_id}|#{pane_pid}|#{@tmux_agents_type}|#{@tmux_agents_state}')
 
-while IFS='|' read -r pane_id pane_pid; do
+while IFS='|' read -r pane_id pane_pid recorded_type recorded_state; do
   if [ -z "$pane_root_pids" ]; then
     pane_root_pids=$pane_pid
   else
     pane_root_pids="$pane_root_pids,$pane_pid"
+  fi
+  if [ -n "$recorded_type" ] || [ -n "$recorded_state" ]; then
+    tracked_pane_ids="${tracked_pane_ids}${pane_id}|"
   fi
 done <<EOF
 $pane_records
@@ -60,7 +65,9 @@ discovery_capture_agent_environments "$nvim_agent_pids"
 while IFS='|' read -r pane_id agent_type process_identity nvim_process_id; do
   [ -n "$pane_id" ] || continue
   if [ -z "$agent_type" ]; then
-    state_apply_event remove "$pane_id"
+    case "$tracked_pane_ids" in
+      *"|$pane_id|"*) state_apply_event remove "$pane_id" ;;
+    esac
     continue
   fi
 

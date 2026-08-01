@@ -179,6 +179,26 @@ client_target_is() {
   [ "$(client_target "$client_name")" = "$expected_target" ]
 }
 
+client_written() {
+  client_name=$1
+
+  while IFS='|' read -r listed_client written_bytes; do
+    if [ "$listed_client" = "$client_name" ]; then
+      printf '%s\n' "$written_bytes"
+      return
+    fi
+  done < <(tmux_test list-clients -F '#{client_name}|#{client_written}')
+
+  return 1
+}
+
+client_has_written_since() {
+  client_name=$1
+  previous_written=$2
+
+  [ "$(client_written "$client_name")" -gt "$previous_written" ]
+}
+
 pane_state_is() {
   pane_id=$1
   expected_state=$2
@@ -869,13 +889,20 @@ run_diagnostics() {
 @test "a hook event refreshes a connected status client without waiting for status interval" {
   show_idle_codex agents:0.0
   tmux_test set-option -g status-right '#{tmux_agents}'
+  tmux_test set-option -g status-interval 999
   load_plugin
   attach_status_client
+  attach_observer_client
+
+  status_written=$(client_written "$status_client_name")
+  observer_written=$(client_written "$observer_client_name")
 
   send_hook_event agents:0.0 codex start codex-session-1
   send_hook_event agents:0.0 codex running codex-session-1
 
   retry_until 20 status_right_contains '#[fg=colour40]1 #[fg=colour244]0'
+  retry_until 20 client_has_written_since "$status_client_name" "$status_written"
+  retry_until 20 client_has_written_since "$observer_client_name" "$observer_written"
 }
 
 @test "a hook refresh does not trigger another client refresh through status rendering" {
@@ -1895,6 +1922,27 @@ run_diagnostics() {
   esac
 }
 
+@test "the chooser lists Agents promptly as unrelated panes grow" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+  pane_number=0
+  while [ "$pane_number" -lt 10 ]; do
+    tmux_test new-window -d -t agents: -n "unrelated-$pane_number"
+    pane_number=$((pane_number + 1))
+  done
+  load_plugin agents:0.0
+
+  enable_fzf_stub
+  tmux_test set-environment -g TMUX_AGENTS_TEST_COMMAND_DELAY 0.02
+  attach_status_client
+  open_chooser
+
+  case "$(<"$chooser_input")" in
+    *'Needs attention · Codex · agents:input.0'*) ;;
+    *) false ;;
+  esac
+}
+
 @test "chooser selection switches only its client and acknowledges the Agent" {
   tmux_test new-session -d -s other -n decoy -x 80 -y 24
   tmux_test new-window -d -t other: -n target
@@ -2009,6 +2057,29 @@ run_diagnostics() {
   case "$(tmux_test list-keys -T prefix a)" in
     *fzf*) false ;;
   esac
+}
+
+@test "direct jump responds promptly as unrelated panes grow" {
+  tmux_test new-session -d -s other -n input -x 80 -y 24
+  show_codex_approval other:input.0
+  pane_number=0
+  while [ "$pane_number" -lt 10 ]; do
+    tmux_test new-window -d -t agents: -n "unrelated-$pane_number"
+    pane_number=$((pane_number + 1))
+  done
+  load_plugin agents:0.0
+
+  input_id=$(tmux_test display-message -p -t other:input.0 '#{pane_id}')
+  input_location=$(tmux_test display-message -p -t "$input_id" \
+    '#{session_id}:#{window_id}.#{pane_id}')
+  tmux_test set-environment -g PATH "$test_bin:$PATH"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_REAL_TMUX "$real_tmux"
+  tmux_test set-environment -g TMUX_AGENTS_TEST_COMMAND_DELAY 0.02
+  attach_status_client
+
+  printf '\002a' >&9
+
+  retry_until 100 client_target_is "$status_client_name" "$input_location"
 }
 
 @test "repeated direct jumps drain Reviewable results from oldest to newest" {
