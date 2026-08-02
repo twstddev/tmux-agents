@@ -61,6 +61,8 @@ tmux set-hook -g 'after-select-window[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/selection.sh\\\" '#{pane_id}'\""
 tmux set-hook -g 'pane-exited[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/lifecycle.sh\\\"\""
+tmux set-hook -g 'after-kill-pane[1000]' \
+  "run-shell -b \"\\\"$plugin_root/scripts/lifecycle.sh\\\"\""
 
 "$plugin_root/scripts/reconcile.sh"
 "$plugin_root/scripts/scan.sh"
