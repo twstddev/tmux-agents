@@ -897,6 +897,21 @@ run_diagnostics() {
   pane_state_is agents:0.0 stale
 }
 
+@test "a hidden Sidekick result needs attention when its host pane is visible" {
+  enable_nvim_stub
+  load_plugin
+  attach_status_client
+
+  send_hook_event agents:0.0 codex start sidekick-session-hidden turn-1 \
+    /tmp/nvim-sidekick
+  printf '%s\n' hidden >"$nvim_response"
+  send_hook_event agents:0.0 codex result sidekick-session-hidden turn-2 \
+    /tmp/nvim-sidekick
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  pane_state_is agents:0.0 attention
+}
+
 @test "a result hidden by a zoomed pane needs attention" {
   load_plugin
   attach_status_client

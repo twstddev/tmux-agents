@@ -79,6 +79,7 @@ if [ "$event_name" != 'start' ] && [ "$recorded_source" = 'hook' ] &&
 fi
 
 attention_allowed=1
+hook_sidekick_visibility=
 hook_pane_is_visible() {
   hook_window_id=$(tmux display-message -p -t "$hook_pane_id" '#{window_id}')
 
@@ -97,8 +98,13 @@ if [ "$event_name" = 'input' ]; then
   if tmux list-clients -F '#{pane_id}' | grep -Fqx "$hook_pane_id"; then
     attention_allowed=0
   fi
-elif [ "$event_name" = 'result' ] && hook_pane_is_visible; then
-  attention_allowed=0
+elif [ "$event_name" = 'result' ]; then
+  if [ -n "${NVIM-}" ]; then
+    hook_sidekick_visibility=$(sidekick_terminal_visibility "$agent_type" "$NVIM") || true
+  fi
+  if [ "$hook_sidekick_visibility" != 'hidden' ] && hook_pane_is_visible; then
+    attention_allowed=0
+  fi
 fi
 
 if [ "$attention_allowed" -eq 0 ]; then
