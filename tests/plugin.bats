@@ -559,6 +559,9 @@ run_diagnostics() {
   load_plugin
 
   send_plugin_hook_event agents:0.0 tmux-agents-claude start claude-session-1
+
+  tmux_test split-window -d -t agents:0
+  tmux_test select-pane -t agents:0.1
   send_plugin_hook_event agents:0.0 tmux-agents-claude input \
     claude-session-1 turn-2
 
@@ -843,6 +846,9 @@ run_diagnostics() {
   send_hook_event agents:0.0 claude start claude-session-1
   send_hook_event agents:0.0 claude running claude-session-1
 
+  tmux_test split-window -d -t agents:0
+  tmux_test select-pane -t agents:0.1
+
   [ "$(plugin_option '@tmux_agents_count_running')" = '1' ]
 
   send_hook_event agents:0.0 claude input claude-session-1 turn-2
@@ -856,6 +862,53 @@ run_diagnostics() {
   send_hook_event agents:0.0 claude end claude-session-1
 
   [ "$(plugin_option '@tmux_agents_count_total')" = '0' ]
+}
+
+@test "hook attention is suppressed for the focused pane" {
+  load_plugin
+  attach_status_client
+
+  send_hook_event agents:0.0 codex start codex-session-focused
+  send_hook_event agents:0.0 codex running codex-session-focused turn-2
+  send_hook_event agents:0.0 codex result codex-session-focused turn-3
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  pane_state_is agents:0.0 stale
+
+  tmux_test split-window -d -t agents:0
+  send_hook_event agents:0.1 codex start codex-session-unfocused
+  send_hook_event agents:0.1 codex input codex-session-unfocused turn-2
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+}
+
+@test "a result in another visible pane does not need attention" {
+  load_plugin
+  attach_status_client
+  tmux_test split-window -d -t agents:0
+  tmux_test select-pane -t agents:0.1
+
+  send_hook_event agents:0.0 codex start codex-session-visible
+  send_hook_event agents:0.0 codex result codex-session-visible turn-2
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '0' ]
+  [ "$(plugin_option '@tmux_agents_count_stale')" = '1' ]
+  pane_state_is agents:0.0 stale
+}
+
+@test "a result hidden by a zoomed pane needs attention" {
+  load_plugin
+  attach_status_client
+  tmux_test split-window -d -t agents:0
+  tmux_test select-pane -t agents:0.1
+  tmux_test resize-pane -Z -t agents:0.1
+
+  send_hook_event agents:0.0 codex start codex-session-hidden
+  send_hook_event agents:0.0 codex result codex-session-hidden turn-2
+
+  [ "$(plugin_option '@tmux_agents_count_attention')" = '1' ]
+  pane_state_is agents:0.0 attention
 }
 
 @test "a changed hook session starts fresh state and stale end events are ignored" {
@@ -897,6 +950,9 @@ run_diagnostics() {
   show_codex_approval agents:0.0
   load_plugin
   send_hook_event agents:0.0 codex start codex-session-1
+
+  tmux_test split-window -d -t agents:0
+  tmux_test select-pane -t agents:0.1
   send_hook_event agents:0.0 codex input codex-session-1 turn-2
 
   load_plugin agents:0.0
@@ -912,6 +968,9 @@ run_diagnostics() {
   show_idle_claude agents:0.0
   load_plugin
   send_hook_event agents:0.0 claude start claude-session-1
+
+  tmux_test split-window -d -t agents:0
+  tmux_test select-pane -t agents:0.1
   send_hook_event agents:0.0 claude result claude-session-1 turn-2
 
   load_plugin agents:0.0

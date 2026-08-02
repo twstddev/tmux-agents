@@ -78,7 +78,38 @@ if [ "$event_name" != 'start' ] && [ "$recorded_source" = 'hook' ] &&
   exit 0
 fi
 
-state_debug "hook event=$event_name pane=$hook_pane_id type=$agent_type identity=$session_identity"
+attention_allowed=1
+hook_pane_is_visible() {
+  hook_window_id=$(tmux display-message -p -t "$hook_pane_id" '#{window_id}')
+
+  while IFS='|' read -r client_window_id client_window_zoomed client_pane_id; do
+    [ "$client_window_id" = "$hook_window_id" ] || continue
+    if [ "$client_window_zoomed" != '1' ] ||
+      [ "$client_pane_id" = "$hook_pane_id" ]; then
+      return 0
+    fi
+  done < <(tmux list-clients -F '#{window_id}|#{window_zoomed_flag}|#{pane_id}')
+
+  return 1
+}
+
+if [ "$event_name" = 'input' ]; then
+  if tmux list-clients -F '#{pane_id}' | grep -Fqx "$hook_pane_id"; then
+    attention_allowed=0
+  fi
+elif [ "$event_name" = 'result' ] && hook_pane_is_visible; then
+  attention_allowed=0
+fi
+
+if [ "$attention_allowed" -eq 0 ]; then
+  if [ "$event_name" = 'result' ]; then
+    state_debug "hook event=$event_name pane=$hook_pane_id identity=$session_identity reason=visible-pane action=mark-stale"
+  else
+    state_debug "hook ignored event=$event_name pane=$hook_pane_id identity=$session_identity reason=focused-pane"
+  fi
+else
+  state_debug "hook event=$event_name pane=$hook_pane_id type=$agent_type identity=$session_identity"
+fi
 tmux set-option -pq -t "$hook_pane_id" '@tmux_agents_last_hook_at' "$(date +%s)"
 
 case "$event_name" in
@@ -95,8 +126,13 @@ input)
     "$event_signature" '' 'hook' "$session_identity" 'input'
   ;;
 result)
-  state_apply_event transition "$hook_pane_id" "$agent_type" 'attention' 'result' \
-    "$event_signature" '' 'hook' "$session_identity" 'result'
+  if [ "$attention_allowed" -eq 1 ]; then
+    state_apply_event transition "$hook_pane_id" "$agent_type" 'attention' 'result' \
+      "$event_signature" '' 'hook' "$session_identity" 'result'
+  else
+    state_apply_event transition "$hook_pane_id" "$agent_type" 'stale' 'result' \
+      '' '' 'hook' "$session_identity" 'result'
+  fi
   ;;
 esac
 

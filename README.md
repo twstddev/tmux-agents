@@ -17,7 +17,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Marks fallback Agents with a supported working footer as Running and supported approvals and questions as Needs attention.
 - Changes a Reviewable result to Stale after its pane is selected. Selecting an Input request acknowledges it temporarily; it returns to Needs attention if the user leaves without responding.
 - Marks idle, unsupported, and ambiguous Agent screens as Stale when no Running or Needs attention signal is detected.
-- Supports optional Codex and Claude Code lifecycle hooks for immediate standalone Agent updates.
+- Supports optional Codex and Claude Code lifecycle hooks for immediate standalone Agent updates; input events only raise Needs attention for panes that are not currently focused, while result events only raise Needs attention when the Agent pane is not visible. An inactive pane in the current unzoomed window is visible; a pane hidden by a zoomed window is not.
 - Verifies Sidekick's embedded Codex and Claude Code terminals through Neovim RPC, including hookless Agents discovered below Neovim, then returns navigation to the containing editor pane and opens the Agent in Sidekick's configured layout.
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps four numeric count options available, including zero values.
