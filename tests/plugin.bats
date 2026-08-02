@@ -510,11 +510,28 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_plugin_root')" = "$project_root" ]
 }
 
+@test "a fresh tmux server renders the status segment when its first session is created" {
+  tmux_test kill-server
+  socket_path="$BATS_TEST_TMPDIR/fresh-tmux.sock"
+  fresh_config="$BATS_TEST_TMPDIR/fresh-server.conf"
+  printf '%s\n' \
+    "set-option -g status-right '#{tmux_agents}'" \
+    "run-shell '$project_root/tmux-agents.tmux'" >"$fresh_config"
+
+  TMUX='' tmux -S "$socket_path" -f "$fresh_config" \
+    new-session -d -s agents -x 80 -y 24
+
+  retry_until 100 status_right_contains \
+    '#[fg=colour244,bg=default]'
+  retry_until 100 plugin_option_is '@tmux_agents_safety_scheduled' 1
+}
+
 @test "loading the plugin preserves existing tmux hooks" {
   existing_hook='set-option -g @tmux_agents_test_existing_hook 1'
   tmux_test set-hook -g after-select-pane "$existing_hook"
   tmux_test set-hook -g after-select-window "$existing_hook"
   tmux_test set-hook -g pane-exited "$existing_hook"
+  tmux_test set-hook -g session-created "$existing_hook"
 
   load_plugin
 
@@ -528,6 +545,10 @@ run_diagnostics() {
   esac
   case "$(tmux_test show-hooks -g pane-exited)" in
     *"$existing_hook"*lifecycle.sh*) ;;
+    *) false ;;
+  esac
+  case "$(tmux_test show-hooks -g session-created)" in
+    *"$existing_hook"*startup.sh*) ;;
     *) false ;;
   esac
 }

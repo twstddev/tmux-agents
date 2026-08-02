@@ -56,6 +56,13 @@ ensure_status_color '@tmux_agents_stale_bg' 'default'
 install_placeholders 'status-left'
 install_placeholders 'status-right'
 
+# Render from the initialized cache before pane discovery. During first-server
+# startup tmux reads this file before it creates the first session and pane.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=scripts/state.sh
+. "$plugin_root/scripts/state.sh"
+state_render_status
+
 chooser_key=$(tmux show-options -gqv '@tmux_agents_chooser_key')
 if [ -z "$chooser_key" ]; then
   chooser_key='A'
@@ -78,7 +85,7 @@ tmux set-hook -g 'pane-exited[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/lifecycle.sh\\\"\""
 tmux set-hook -g 'after-kill-pane[1000]' \
   "run-shell -b \"\\\"$plugin_root/scripts/lifecycle.sh\\\"\""
+tmux set-hook -g 'session-created[1000]' \
+  "run-shell -b \"\\\"$plugin_root/scripts/startup.sh\\\"\""
 
-"$plugin_root/scripts/reconcile.sh"
-"$plugin_root/scripts/scan.sh"
-"$plugin_root/scripts/schedule.sh" safety
+"$plugin_root/scripts/startup.sh"
