@@ -15,6 +15,15 @@ ensure_count() {
   fi
 }
 
+ensure_status_color() {
+  option_name=$1
+  option_value=$2
+
+  if [ -z "$(tmux show-options -gqv "$option_name")" ]; then
+    tmux set-option -gq "$option_name" "$option_value"
+  fi
+}
+
 install_placeholders() {
   option_name=$1
   option_value=$(tmux show-options -gqv "$option_name")
@@ -37,6 +46,12 @@ ensure_count '@tmux_agents_count_attention'
 ensure_count '@tmux_agents_count_running'
 ensure_count '@tmux_agents_count_stale'
 ensure_count '@tmux_agents_count_total'
+ensure_status_color '@tmux_agents_attention_fg' 'colour255'
+ensure_status_color '@tmux_agents_attention_bg' 'colour196'
+ensure_status_color '@tmux_agents_running_fg' 'colour40'
+ensure_status_color '@tmux_agents_running_bg' 'default'
+ensure_status_color '@tmux_agents_stale_fg' 'colour244'
+ensure_status_color '@tmux_agents_stale_bg' 'default'
 
 install_placeholders 'status-left'
 install_placeholders 'status-right'

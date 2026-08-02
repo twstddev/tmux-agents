@@ -1379,7 +1379,7 @@ run_diagnostics() {
   [ "$(plugin_option '@tmux_agents_count_running')" = '0' ]
   [ "$(plugin_option '@tmux_agents_count_stale')" = '2' ]
   [ "$(plugin_option '@tmux_agents_count_total')" = '2' ]
-  retry_until 100 status_right_contains '󰚩 2'
+  retry_until 100 status_right_contains ' 2'
   [ "$(tmux_test show-options -pqv -t agents:background.0 '@tmux_agents_state')" = 'stale' ]
 
   runtime_options=$(all_runtime_options agents:0.0)
@@ -1884,10 +1884,10 @@ run_diagnostics() {
 
   load_plugin agents:0.0
 
-  retry_until 100 status_right_contains '#[fg=colour40]1 #[fg=colour244]2'
+  retry_until 100 status_right_contains '#[fg=colour40,bg=default] 1#[fg=colour40,bg=default]  #[fg=colour244,bg=default] 2#[default]'
 }
 
-@test "the default widget shows nonzero Needs attention first in an orange pill" {
+@test "the default widget shows nonzero Needs attention first in a bold red pill" {
   tmux_test new-window -d -t agents: -n running
   tmux_test new-window -d -t agents: -n input
   show_running_codex agents:running.0
@@ -1897,7 +1897,24 @@ run_diagnostics() {
   load_plugin agents:0.0
 
   retry_until 100 status_right_contains \
-    '󰚩 #[fg=colour208]#[fg=colour232,bg=colour208]1#[fg=colour208,bg=default] #[fg=colour40]1 #[fg=colour244]0'
+    '#[fg=colour196,bold]#[fg=colour255,bg=colour196,bold] 1#[fg=colour196,bg=default,nobold]  #[fg=colour40,bg=default] 1#[fg=colour40,bg=default]  #[fg=colour244,bg=default] 0#[default]'
+}
+
+@test "all count colors are configurable" {
+  tmux_test new-window -d -t agents: -n input
+  show_codex_approval agents:input.0
+  tmux_test set-option -g '@tmux_agents_attention_fg' colour15
+  tmux_test set-option -g '@tmux_agents_attention_bg' colour202
+  tmux_test set-option -g '@tmux_agents_running_fg' colour33
+  tmux_test set-option -g '@tmux_agents_running_bg' colour235
+  tmux_test set-option -g '@tmux_agents_stale_fg' colour245
+  tmux_test set-option -g '@tmux_agents_stale_bg' colour238
+  tmux_test set-option -g status-right '#{tmux_agents}'
+
+  load_plugin agents:0.0
+
+  retry_until 100 status_right_contains \
+    '#[fg=colour202,bold]#[fg=colour15,bg=colour202,bold] 1#[fg=colour202,bg=default,nobold]  #[fg=colour245,bg=colour238] 0#[default]'
 }
 
 @test "ordinary status rendering performs no discovery or screen capture" {
@@ -1919,12 +1936,13 @@ run_diagnostics() {
   [ "$(<"$process_snapshot_count")" = '0' ]
 }
 
-@test "the explicit default placeholder renders the robot and Stale zero" {
+@test "the explicit default placeholder renders Stale zero" {
   tmux_test set-option -g status-right '#{tmux_agents}'
 
   load_plugin
 
-  retry_until 100 status_right_contains '#[fg=colour244]󰚩 0#[default]'
+  retry_until 100 status_right_contains \
+    '#[fg=colour244,bg=default] 0#[default]'
   installed_status=$(tmux_test show-options -gv status-right)
   load_plugin
   [ "$(tmux_test show-options -gv status-right)" = "$installed_status" ]

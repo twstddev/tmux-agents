@@ -22,7 +22,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Stores Agent metadata on the pane, so no runtime state files are created.
 - Keeps four numeric count options available, including zero values.
 - Keeps status rendering event-driven: the widget reads cached tmux options and never starts process discovery or captures a screen.
-- Provides an explicitly placed `#{tmux_agents}` status placeholder with a robot icon, a conditional orange Needs attention pill, a conditional green Running count, and a muted Stale count.
+- Provides an explicitly placed `#{tmux_agents}` status placeholder with a bold red Needs attention pill containing a bell icon, a green Running count with an iterations icon, and a muted Stale count with a moon icon.
 - Opens an fzf Agent chooser with prefix + <kbd>A</kbd>. The chooser groups Agents by Needs attention, Stale, then Running; marks embedded Sidekick Agents; shows pane context and state age; previews the highlighted pane's current screen; and can switch the invoking client across sessions.
 - Jumps directly to the longest-waiting Agent that Needs attention with prefix + <kbd>a</kbd>.
 - Provides a diagnostic command for process discovery, hook registration, fallback state, and Sidekick RPC readiness without inspecting Agent conversations.
@@ -33,7 +33,7 @@ It discovers Codex and Claude Code panes across the current tmux server and clas
 - Bash 3.2 or newer
 - fzf 0.61.3 or newer for the Agent chooser
 - Neovim with [sidekick.nvim](https://github.com/folke/sidekick.nvim) for embedded Sidekick Agent navigation
-- A Nerd Font for the default robot icon
+- A Nerd Font for the default status icons
 
 ## Install with TPM
 
@@ -124,12 +124,23 @@ Inspect it with `tmux show-messages | grep 'tmux-agents debug'`. Messages are em
 
 ## Customize the status widget
 
-The default `#{tmux_agents}` widget shows the robot icon, followed by Needs attention, Running, and Stale. Needs attention and Running disappear when their count is zero; Stale remains visible so the widget has a stable presence. Rendering only reads its cached tmux option, so your normal `status-interval` does not control Agent discovery or polling.
+The default `#{tmux_agents}` widget shows an Octicon bell for Needs attention, an Octicon iterations icon for Running, and an Octicon moon for Stale, with two spaces between visible count groups. Needs attention and Running disappear when their count is zero; Stale remains visible so the widget has a stable presence. Rendering only reads its cached tmux option, so your normal `status-interval` does not control Agent discovery or polling.
 
 For custom styling, render the public count options directly:
 
 ```tmux
 set -ag status-right ' A:#{@tmux_agents_count_attention} R:#{@tmux_agents_count_running} S:#{@tmux_agents_count_stale}'
+```
+
+Customize each count's foreground and background with tmux color names or 256-color numbers. The default backgrounds for Running and Stale are transparent:
+
+```tmux
+set -g @tmux_agents_attention_fg 'colour255'
+set -g @tmux_agents_attention_bg 'colour196'
+set -g @tmux_agents_running_fg 'colour40'
+set -g @tmux_agents_running_bg 'default'
+set -g @tmux_agents_stale_fg 'colour244'
+set -g @tmux_agents_stale_bg 'default'
 ```
 
 Set the default placeholder before the plugin entry point runs if you want the built-in widget. The plugin does not add a placeholder or change `status-left` or `status-right` on its own. The former `#{tmux_agents_scan}` placeholder has been removed.

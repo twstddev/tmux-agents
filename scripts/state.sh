@@ -344,19 +344,33 @@ state_render_status() {
   state_attention_count=$(tmux show-options -gqv '@tmux_agents_count_attention')
   state_running_count=$(tmux show-options -gqv '@tmux_agents_count_running')
   state_stale_count=$(tmux show-options -gqv '@tmux_agents_count_stale')
-  state_status_value='#[fg=colour244]󰚩'
+  state_attention_fg=$(tmux show-options -gqv '@tmux_agents_attention_fg')
+  state_attention_bg=$(tmux show-options -gqv '@tmux_agents_attention_bg')
+  state_running_fg=$(tmux show-options -gqv '@tmux_agents_running_fg')
+  state_running_bg=$(tmux show-options -gqv '@tmux_agents_running_bg')
+  state_stale_fg=$(tmux show-options -gqv '@tmux_agents_stale_fg')
+  state_stale_bg=$(tmux show-options -gqv '@tmux_agents_stale_bg')
+  [ -n "$state_attention_fg" ] || state_attention_fg='colour255'
+  [ -n "$state_attention_bg" ] || state_attention_bg='colour196'
+  [ -n "$state_running_fg" ] || state_running_fg='colour40'
+  [ -n "$state_running_bg" ] || state_running_bg='default'
+  [ -n "$state_stale_fg" ] || state_stale_fg='colour244'
+  [ -n "$state_stale_bg" ] || state_stale_bg='default'
+  state_status_value=''
 
   if [ "$state_attention_count" -gt 0 ]; then
-    state_status_value="$state_status_value #[fg=colour208]#[fg=colour232,bg=colour208]$state_attention_count#[fg=colour208,bg=default]"
+    state_status_value="$state_status_value#[fg=$state_attention_bg,bold]#[fg=$state_attention_fg,bg=$state_attention_bg,bold] $state_attention_count#[fg=$state_attention_bg,bg=default,nobold]"
   fi
   if [ "$state_running_count" -gt 0 ]; then
-    state_status_value="$state_status_value #[fg=colour40]$state_running_count"
+    if [ -n "$state_status_value" ]; then
+      state_status_value="$state_status_value  "
+    fi
+    state_status_value="$state_status_value#[fg=$state_running_fg,bg=$state_running_bg] $state_running_count#[fg=$state_running_fg,bg=default]"
   fi
-  if [ "$state_attention_count" -gt 0 ] || [ "$state_running_count" -gt 0 ]; then
-    state_status_value="$state_status_value #[fg=colour244]$state_stale_count#[default]"
-  else
-    state_status_value="$state_status_value $state_stale_count#[default]"
+  if [ -n "$state_status_value" ]; then
+    state_status_value="$state_status_value  "
   fi
+  state_status_value="$state_status_value#[fg=$state_stale_fg,bg=$state_stale_bg] $state_stale_count#[default]"
 
   state_set_global_option '@tmux_agents_status' "$state_status_value"
 }
