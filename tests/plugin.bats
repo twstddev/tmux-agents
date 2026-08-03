@@ -112,6 +112,11 @@ status_is_count_on_socket() {
   esac
 }
 
+codex_hook() {
+  tmux_test run-shell -b \
+    "TMUX_PANE='$pane_id' '$project_root/plugins/codex/plugins/tmux-agents/scripts/hook.sh' '$1'"
+}
+
 prefix_a_is_bound() {
   tmux_test list-keys -T prefix a 2>/dev/null |
     grep -F "$project_root/scripts/navigate.sh" >/dev/null
@@ -356,4 +361,52 @@ attention_marker_is_replaced() {
   fi
   [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
     "$pane_id" ]
+}
+
+@test "Codex marketplace and plugin manifest identify the companion plugin" {
+  marketplace="$project_root/plugins/codex/.agents/plugins/marketplace.json"
+  manifest="$project_root/plugins/codex/plugins/tmux-agents/.codex-plugin/plugin.json"
+
+  grep -F '"name": "tmux-agents"' "$marketplace"
+  grep -F '"path": "./plugins/tmux-agents"' "$marketplace"
+  grep -F '"version": "0.1.0"' "$manifest"
+  grep -F '"name": "twstd"' "$manifest"
+  grep -F '"repository": "https://github.com/twstddev/tmux-agents"' "$manifest"
+}
+
+@test "Codex permission hooks delegate mark and later progress to tmux" {
+  codex_hook mark
+  retry_until attention_is_timestamp
+  retry_until status_is_count 1
+
+  codex_hook clear
+  retry_until attention_is_clear
+  retry_until status_is_hidden
+}
+
+@test "Codex hook configuration covers permission and progress without structured questions" {
+  hooks="$project_root/plugins/codex/plugins/tmux-agents/hooks/hooks.json"
+
+  grep -F '"PermissionRequest": [' "$hooks"
+  grep -F '"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" mark"' "$hooks"
+  grep -F '"PostToolUse": [' "$hooks"
+  grep -F '"UserPromptSubmit": [' "$hooks"
+  grep -F '"Stop": [' "$hooks"
+  grep -F '"SessionEnd": [' "$hooks"
+  clear_command='"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" clear"'
+  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 4 ]
+  ! grep -F 'request_user_input' "$hooks"
+}
+
+@test "Codex adapter is silent when tmux or the shared hook is unavailable" {
+  run env -u TMUX -u TMUX_PANE \
+    "$project_root/plugins/codex/plugins/tmux-agents/scripts/hook.sh" mark
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+
+  tmux_test set-option -g '@tmux_agents_plugin_path' \
+    "$BATS_TEST_TMPDIR/missing-tmux-agents"
+  codex_hook mark
+  sleep 0.1
+  attention_is_clear
 }

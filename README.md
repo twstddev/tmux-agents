@@ -4,7 +4,7 @@
 your attention. It counts marked panes across the current tmux server and
 refreshes immediately when a marker is marked or cleared.
 
-## Current setup
+## Setup
 
 Install through TPM:
 
@@ -21,4 +21,13 @@ current tmux server. The marker remains until the Agent's lifecycle hook clears
 it. If the queue is empty, tmux displays `No agents need attention`.
 
 The shared mark and clear hook is available to companion Agent plugins. Codex
-and Claude Code companion integrations are planned for a later v1 slice.
+permission prompts are supported through the included local Codex plugin:
+
+```sh
+codex plugin marketplace add ~/.tmux/plugins/tmux-agents/plugins/codex
+codex plugin add tmux-agents@tmux-agents
+```
+
+Review and trust the plugin hooks with Codex's `/hooks` command. Codex's native
+structured `request_user_input` questions are not tracked, and a permission
+marker may remain until later tool or turn activity clears it.

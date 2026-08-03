@@ -1,0 +1,20 @@
+{
+  "name": "tmux-agents",
+  "interface": {
+    "displayName": "tmux-agents"
+  },
+  "plugins": [
+    {
+      "name": "tmux-agents",
+      "source": {
+        "source": "local",
+        "path": "./plugins/tmux-agents"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

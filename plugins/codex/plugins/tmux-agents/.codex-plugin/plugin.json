@@ -1,0 +1,23 @@
+{
+  "name": "tmux-agents",
+  "version": "0.1.0",
+  "description": "Connect Codex permission lifecycle events to tmux-agents.",
+  "author": {
+    "name": "twstd",
+    "url": "https://github.com/twstd"
+  },
+  "homepage": "https://github.com/twstddev/tmux-agents",
+  "repository": "https://github.com/twstddev/tmux-agents",
+  "license": "MIT",
+  "keywords": ["tmux", "codex", "attention"],
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "tmux-agents for Codex",
+    "shortDescription": "Show Codex permission requests in tmux.",
+    "longDescription": "Marks the current tmux pane when Codex requests permission and clears it when later lifecycle activity shows progress.",
+    "developerName": "twstd",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use tmux-agents to show Codex attention requests."
+  }
+}
