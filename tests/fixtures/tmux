@@ -1,0 +1,15 @@
+#!/bin/sh
+
+set -eu
+
+real_tmux=${REAL_TMUX-}
+[ -n "$real_tmux" ] || exit 1
+
+if [ "${1-}" = 'list-panes' ]; then
+  pane_list=$("$real_tmux" "$@")
+  printf '%s\n' "$pane_list"
+  "$real_tmux" kill-pane -t "${RACE_TARGET-}" 2>/dev/null || true
+  exit 0
+fi
+
+exec "$real_tmux" "$@"

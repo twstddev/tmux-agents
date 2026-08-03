@@ -13,6 +13,24 @@ setup() {
 }
 
 teardown() {
+  if [ -n "${client2_name-}" ]; then
+    tmux_test kill-client -t "$client2_name" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${client_name-}" ]; then
+    tmux_test kill-client -t "$client_name" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${client2_input-}" ]; then
+    exec 8>&- 2>/dev/null || true
+  fi
+  if [ -n "${client_input-}" ]; then
+    exec 9>&- 2>/dev/null || true
+  fi
+  if [ -n "${client2_pid-}" ]; then
+    kill "$client2_pid" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${client_pid-}" ]; then
+    kill "$client_pid" >/dev/null 2>&1 || true
+  fi
   tmux_test kill-server >/dev/null 2>&1 || true
   other_tmux_test kill-server >/dev/null 2>&1 || true
 }
@@ -92,6 +110,64 @@ status_is_count_on_socket() {
     *"󱙺 $2#[fg="*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+prefix_a_is_bound() {
+  tmux_test list-keys -T prefix a 2>/dev/null |
+    grep -F "$project_root/scripts/navigate.sh" >/dev/null
+}
+
+client_is_on_pane() {
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}' \
+    2>/dev/null)" = "$oldest_pane" ]
+}
+
+client_exists() {
+  [ -n "$(tmux_test list-clients -F '#{client_name}' 2>/dev/null)" ]
+}
+
+start_client() {
+  client_input="$BATS_TEST_TMPDIR/client.input"
+  mkfifo "$client_input"
+  client_output="$BATS_TEST_TMPDIR/client.log"
+  script -qefc \
+    "TERM=xterm TMUX= tmux -S '$socket_path' -f /dev/null attach-session -t agents" \
+    /dev/null <"$client_input" >"$client_output" 2>&1 &
+  client_pid=$!
+  exec 9>"$client_input"
+  if ! retry_until client_exists; then
+    sed -n '1,40p' "$client_output"
+    false
+  fi
+  client_name=$(tmux_test list-clients -F '#{client_name}' | head -n 1)
+}
+
+start_second_client() {
+  client2_input="$BATS_TEST_TMPDIR/client-2.input"
+  mkfifo "$client2_input"
+  client2_output="$BATS_TEST_TMPDIR/client-2.log"
+  script -qefc \
+    "TERM=xterm TMUX= tmux -S '$socket_path' -f /dev/null attach-session -t agents" \
+    /dev/null <"$client2_input" >"$client2_output" 2>&1 &
+  client2_pid=$!
+  exec 8>"$client2_input"
+  retry_until clients_are_attached_twice
+  client2_name=$(tmux_test list-clients -F '#{client_name}' |
+    grep -v -F "$client_name" | head -n 1)
+}
+
+clients_are_attached_twice() {
+  [ "$(tmux_test list-clients -F '#{client_name}' | wc -l | tr -d ' ')" -ge 2 ]
+}
+
+second_client_is_on_current_pane() {
+  [ "$(tmux_test display-message -p -t "$client2_name" '#{pane_id}' \
+    2>/dev/null)" = "$pane_id" ]
+}
+
+attention_message_is_visible() {
+  tmux_test show-messages 2>/dev/null |
+    grep -F 'No agents need attention' >/dev/null
 }
 
 attention_marker_is_replaced() {
@@ -215,4 +291,69 @@ attention_marker_is_replaced() {
     "TMUX_PANE='$pane_id' '$project_root/scripts/hook.sh' clear"
   retry_until status_is_hidden
   retry_until other_status_is_count 1
+}
+
+@test "loading binds prefix plus lowercase a to attention navigation" {
+  retry_until prefix_a_is_bound
+}
+
+@test "navigation reports an empty attention queue without changing the pane" {
+  original_pane=$pane_id
+
+  start_client
+  tmux_test run-shell -b \
+    "'$project_root/scripts/navigate.sh' '$client_name'"
+  retry_until attention_message_is_visible
+
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$original_pane" ]
+}
+
+@test "navigation selects the oldest marked pane across sessions for its client" {
+  oldest_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s oldest)
+  mark_pane "$oldest_pane"
+  sleep 1
+  mark_pane "$pane_id"
+
+  start_client
+
+  printf '\002a' >&9
+  retry_until client_is_on_pane
+
+  retry_until status_is_count 2
+  [ "$(tmux_test show-options -pqv -t "$oldest_pane" \
+    '@tmux_agents_attention')" ]
+}
+
+@test "navigation leaves other attached clients in place" {
+  oldest_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s oldest)
+  mark_pane "$oldest_pane"
+  sleep 1
+  mark_pane "$pane_id"
+
+  start_client
+  start_second_client
+  printf '\002a' >&9
+
+  retry_until client_is_on_pane
+  retry_until second_client_is_on_current_pane
+}
+
+@test "navigation tolerates a marked target vanishing during selection" {
+  oldest_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s oldest)
+  mark_pane "$oldest_pane"
+  sleep 1
+  mark_pane "$pane_id"
+
+  start_client
+  tmux_test run-shell -b \
+    "PATH='$project_root/tests/fixtures:$PATH' REAL_TMUX='$(command -v tmux)' RACE_TARGET='$oldest_pane' '$project_root/scripts/navigate.sh' '$client_name'"
+
+  if ! retry_until status_is_count 1; then
+    tmux_test list-panes -a -F '#{session_name}|#{pane_id}|#{@tmux_agents_attention}'
+    tmux_test show-options -gqv '@tmux_agents_status'
+    false
+  fi
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$pane_id" ]
 }

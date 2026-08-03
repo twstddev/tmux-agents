@@ -6,6 +6,9 @@ plugin_path=$(cd -- "$(dirname -- "$0")" && pwd)
 
 tmux set-option -gq '@tmux_agents_plugin_path' "$plugin_path"
 
+tmux bind-key -T prefix a run-shell -b \
+  "\"$plugin_path/scripts/navigate.sh\" '#{client_name}'"
+
 install_placeholder() {
   option_name=$1
   option_value=$(tmux show-options -gqv "$option_name")

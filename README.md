@@ -16,5 +16,9 @@ set -g status-right '#{tmux_agents}'
 The bubble uses a white foreground and red background by default. Customize
 them with `@tmux_agents_attention_fg` and `@tmux_agents_attention_bg`.
 
+Press prefix plus lowercase `a` to jump to the oldest marked pane across the
+current tmux server. The marker remains until the Agent's lifecycle hook clears
+it. If the queue is empty, tmux displays `No agents need attention`.
+
 The shared mark and clear hook is available to companion Agent plugins. Codex
 and Claude Code companion integrations are planned for a later v1 slice.
