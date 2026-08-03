@@ -2,7 +2,7 @@
 
 set -eu
 
-plugin_path=$(cd -- "$(dirname -- "$0")/.." && pwd)
+plugin_path=$(CDPATH='' cd "$(dirname "$0")/.." && pwd)
 operation=${1-}
 
 case "$operation" in

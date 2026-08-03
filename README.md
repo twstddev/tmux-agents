@@ -1,52 +1,57 @@
 # tmux-agents
 
-`tmux-agents` shows a red robot bubble when a supported Agent interaction needs
-your attention. It counts marked panes across the current tmux server and
-refreshes immediately when a marker is marked or cleared.
+`tmux-agents` shows a robot bubble when a supported Codex or Claude Code
+interaction needs your attention. It counts marked panes in the current tmux
+server and lets you jump to the oldest one.
 
-## Setup
+## Requirements
 
-Install through TPM:
+- Linux or macOS
+- tmux and [TPM](https://github.com/tmux-plugins/tpm)
+- A Nerd Font that includes the robot and rounded-cap glyphs
+- Codex and/or Claude Code for the optional companion plugins
+
+## Install
+
+Add the plugin to `~/.tmux.conf`:
 
 ```tmux
 set -g @plugin 'twstd/tmux-agents'
 set -g status-right '#{tmux_agents}'
+run '~/.tmux/plugins/tpm/tpm'
 ```
 
-The bubble uses a white foreground and red background by default. Customize
-them with `@tmux_agents_attention_fg` and `@tmux_agents_attention_bg`.
+Reload tmux and press `prefix` + `I` to install the plugin through TPM. The
+placeholder can be placed in `status-left` instead if preferred. The bubble
+uses a white foreground and red background by default; customize them with
+`@tmux_agents_attention_fg` and `@tmux_agents_attention_bg`.
 
-Press prefix plus lowercase `a` to jump to the oldest marked pane across the
-current tmux server. The marker remains until the Agent's lifecycle hook clears
-it. If the queue is empty, tmux displays `No agents need attention`.
+Press `prefix` + `a` to jump to the oldest marked pane across the current tmux
+server. Navigation does not clear the marker; the Agent's lifecycle hook does.
 
-## Agent plugins
+## Agent companions
 
-The shared mark and clear hook is available to companion Agent plugins.
+Install the companion for each Agent you use after installing the tmux plugin.
 
 ### Codex
-
-Codex permission prompts are supported through the included local Codex plugin:
 
 ```sh
 codex plugin marketplace add ~/.tmux/plugins/tmux-agents/plugins/codex
 codex plugin add tmux-agents@tmux-agents
 ```
 
-Review and trust the plugin hooks with Codex's `/hooks` command. Codex's native
-structured `request_user_input` questions are not tracked, and a permission
-marker may remain until later tool or turn activity clears it.
+Review and trust the hooks through Codex's native `/hooks` workflow. Permission
+requests are supported. Native structured `request_user_input` questions are
+not tracked, and a permission marker may remain until later tool or turn
+activity clears it.
 
 ### Claude Code
-
-Claude Code interactions are supported through the included local Claude
-marketplace:
 
 ```sh
 claude plugin marketplace add ~/.tmux/plugins/tmux-agents/plugins/claude
 claude plugin install tmux-agents@tmux-agents
 ```
 
-Review and trust the plugin hooks through Claude Code's native plugin workflow.
-Claude tracks permission prompts, `AskUserQuestion`, plan approval, and MCP
-elicitation; matching responses and later lifecycle activity clear the marker.
+Review and trust the hooks through Claude Code's native plugin workflow.
+Permission prompts, `AskUserQuestion`, plan approval, and MCP elicitation are
+supported. Matching responses and later lifecycle activity clear the marker.

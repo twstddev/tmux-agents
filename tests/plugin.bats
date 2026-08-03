@@ -474,3 +474,16 @@ attention_marker_is_replaced() {
   sleep 0.1
   attention_is_clear
 }
+
+@test "runtime scripts parse with a POSIX shell" {
+  for runtime_script in \
+    "$project_root/tmux-agents.tmux" \
+    "$project_root/scripts/hook.sh" \
+    "$project_root/scripts/navigate.sh" \
+    "$project_root/scripts/status.sh" \
+    "$project_root/plugins/codex/plugins/tmux-agents/scripts/hook.sh" \
+    "$project_root/plugins/claude/plugins/tmux-agents/scripts/hook.sh"; do
+    run sh -n "$runtime_script"
+    [ "$status" -eq 0 ]
+  done
+}
