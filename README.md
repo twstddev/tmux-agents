@@ -20,8 +20,13 @@ Press prefix plus lowercase `a` to jump to the oldest marked pane across the
 current tmux server. The marker remains until the Agent's lifecycle hook clears
 it. If the queue is empty, tmux displays `No agents need attention`.
 
-The shared mark and clear hook is available to companion Agent plugins. Codex
-permission prompts are supported through the included local Codex plugin:
+## Agent plugins
+
+The shared mark and clear hook is available to companion Agent plugins.
+
+### Codex
+
+Codex permission prompts are supported through the included local Codex plugin:
 
 ```sh
 codex plugin marketplace add ~/.tmux/plugins/tmux-agents/plugins/codex
@@ -31,3 +36,17 @@ codex plugin add tmux-agents@tmux-agents
 Review and trust the plugin hooks with Codex's `/hooks` command. Codex's native
 structured `request_user_input` questions are not tracked, and a permission
 marker may remain until later tool or turn activity clears it.
+
+### Claude Code
+
+Claude Code interactions are supported through the included local Claude
+marketplace:
+
+```sh
+claude plugin marketplace add ~/.tmux/plugins/tmux-agents/plugins/claude
+claude plugin install tmux-agents@tmux-agents
+```
+
+Review and trust the plugin hooks through Claude Code's native plugin workflow.
+Claude tracks permission prompts, `AskUserQuestion`, plan approval, and MCP
+elicitation; matching responses and later lifecycle activity clear the marker.

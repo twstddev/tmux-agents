@@ -1,0 +1,11 @@
+{
+  "name": "tmux-agents",
+  "version": "0.1.0",
+  "description": "Marks Claude Code interactions that need tmux attention",
+  "author": {
+    "name": "twstd"
+  },
+  "repository": "https://github.com/twstddev/tmux-agents",
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json"
+}
