@@ -359,7 +359,7 @@ state_render_status() {
   state_status_value=''
 
   if [ "$state_attention_count" -gt 0 ]; then
-    state_status_value="$state_status_value#[fg=$state_attention_bg,bold]#[fg=$state_attention_fg,bg=$state_attention_bg,bold] $state_attention_count#[fg=$state_attention_bg,bg=default,nobold]"
+    state_status_value="$state_status_value#[fg=$state_attention_bg,bold]#[fg=$state_attention_fg,bg=$state_attention_bg,bold]󱙺 $state_attention_count#[fg=$state_attention_bg,bg=default,nobold]"
   fi
   if [ "$state_running_count" -gt 0 ]; then
     if [ -n "$state_status_value" ]; then

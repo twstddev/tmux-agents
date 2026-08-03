@@ -124,7 +124,7 @@ Inspect it with `tmux show-messages | grep 'tmux-agents debug'`. Messages are em
 
 ## Customize the status widget
 
-The default `#{tmux_agents}` widget shows an Octicon bell for Needs attention, an Octicon iterations icon for Running, and an Octicon moon for Stale, with two spaces between visible count groups. Needs attention and Running disappear when their count is zero; Stale remains visible so the widget has a stable presence. Rendering only reads its cached tmux option, so your normal `status-interval` does not control Agent discovery or polling.
+The default `#{tmux_agents}` widget shows a Nerd Font robot-outline icon for Needs attention, an Octicon iterations icon for Running, and an Octicon moon for Stale, with two spaces between visible count groups. Needs attention and Running disappear when their count is zero; Stale remains visible so the widget has a stable presence. Rendering only reads its cached tmux option, so your normal `status-interval` does not control Agent discovery or polling.
 
 For custom styling, render the public count options directly:
 
