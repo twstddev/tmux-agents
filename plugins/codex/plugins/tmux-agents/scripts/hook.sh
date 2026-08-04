@@ -4,7 +4,7 @@ set -eu
 
 operation=${1-}
 case "$operation" in
-  mark|clear) ;;
+  mark|clear|complete) ;;
   *) exit 0 ;;
 esac
 

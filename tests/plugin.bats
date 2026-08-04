@@ -58,6 +58,11 @@ mark_pane_on_socket() {
     "TMUX_PANE='$2' '$project_root/scripts/hook.sh' mark"
 }
 
+complete_pane() {
+  tmux_test run-shell -b \
+    "TMUX_PANE='$1' '$project_root/scripts/hook.sh' complete"
+}
+
 retry_until() {
   attempts=0
   while [ "$attempts" -lt 50 ]; do
@@ -92,6 +97,28 @@ attention_is_clear() {
     '@tmux_agents_attention')" ]
 }
 
+finished_is_timestamp() {
+  finished_pane_is_timestamp "$pane_id"
+}
+
+finished_pane_is_timestamp() {
+  finished_marker=$(tmux_test show-options -pqv -t "$1" \
+    '@tmux_agents_finished')
+  case "$finished_marker" in
+    ''|*[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+finished_is_clear() {
+  finished_pane_is_clear "$pane_id"
+}
+
+finished_pane_is_clear() {
+  [ -z "$(tmux_test show-options -pqv -t "$1" \
+    '@tmux_agents_finished')" ]
+}
+
 status_is_hidden() {
   [ -z "$(tmux_test display-message -p '#{E:status-right}')" ]
 }
@@ -108,6 +135,14 @@ status_is_count_on_socket() {
   rendered_status=$(tmux_on_socket "$1" show-options -gqv '@tmux_agents_status')
   case "$rendered_status" in
     *"󱙺 $2#[fg="*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+finished_status_is_count() {
+  rendered_status=$(tmux_test show-options -gqv '@tmux_agents_status')
+  case "$rendered_status" in
+    *'#[fg=green]󱜚 '"$1"*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -153,11 +188,16 @@ start_client() {
 }
 
 start_second_client() {
+  start_client_on_session agents
+}
+
+start_client_on_session() {
+  target_session=$1
   client2_input="$BATS_TEST_TMPDIR/client-2.input"
   mkfifo "$client2_input"
   client2_output="$BATS_TEST_TMPDIR/client-2.log"
   script -qefc \
-    "TERM=xterm TMUX= tmux -S '$socket_path' -f /dev/null attach-session -t agents" \
+    "TERM=xterm TMUX= tmux -S '$socket_path' -f /dev/null attach-session -t '$target_session'" \
     /dev/null <"$client2_input" >"$client2_output" 2>&1 &
   client2_pid=$!
   exec 8>"$client2_input"
@@ -202,6 +242,139 @@ attention_marker_is_replaced() {
     *''*'fg=white,bg=red,bold'*'󱙺 1'*'nobold'*''*) ;;
     *) fail "expected one marked pane in status, got: $rendered_status" ;;
   esac
+}
+
+@test "an unseen completion creates one finished marker and status item" {
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+
+  rendered_status=$(tmux_test show-options -gqv '@tmux_agents_status')
+  case "$rendered_status" in
+    *'#[fg=green]󱜚 1'*) ;;
+    *) fail "expected one finished item, got: $rendered_status" ;;
+  esac
+  [ -z "$(tmux_test show-options -pqv -t "$pane_id" \
+    '@tmux_agents_attention')" ]
+}
+
+@test "a completion in the selected pane is not finished" {
+  start_client
+
+  complete_pane "$pane_id"
+  retry_until finished_is_clear
+  retry_until status_is_hidden
+}
+
+@test "a pane selected by any attached client is not finished" {
+  second_session_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s other)
+  start_client
+  start_client_on_session other
+
+  complete_pane "$second_session_pane"
+  retry_until finished_pane_is_clear "$second_session_pane"
+  retry_until status_is_hidden
+}
+
+@test "an inactive visible split is unseen while the selected pane is seen" {
+  second_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  tmux_test select-pane -t "$pane_id"
+
+  complete_pane "$second_pane"
+  retry_until finished_pane_is_timestamp "$second_pane"
+}
+
+@test "duplicate completion preserves the original finished timestamp" {
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+  original_finished=$(tmux_test show-options -pqv -t "$pane_id" \
+    '@tmux_agents_finished')
+
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+  [ "$(tmux_test show-options -pqv -t "$pane_id" \
+    '@tmux_agents_finished')" = "$original_finished" ]
+  retry_until finished_status_is_count 1
+}
+
+@test "new activity clears finished state and a new attention request replaces it" {
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+
+  tmux_test run-shell -b \
+    "TMUX_PANE='$pane_id' '$project_root/scripts/hook.sh' clear"
+  retry_until finished_is_clear
+
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+  mark_pane "$pane_id"
+  retry_until attention_is_timestamp
+  retry_until finished_is_clear
+}
+
+@test "background completion clears attention before creating finished state" {
+  mark_pane "$pane_id"
+  retry_until attention_is_timestamp
+
+  complete_pane "$pane_id"
+  retry_until attention_is_clear
+  retry_until finished_is_timestamp
+}
+
+@test "finished status uses a configurable foreground and stays visually quiet" {
+  tmux_test set-option -g '@tmux_agents_finished_fg' 'cyan'
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+
+  rendered_status=$(tmux_test show-options -gqv '@tmux_agents_status')
+  case "$rendered_status" in
+    *'#[fg=cyan]󱜚 1'*) ;;
+    *) fail "expected configured finished foreground, got: $rendered_status" ;;
+  esac
+  case "$rendered_status" in
+    *'󱜚 1#[bold]'*|*'󱜚 1'*) fail "finished item should not be bold or capped" ;;
+  esac
+}
+
+@test "attention renders before finished with exactly two spaces" {
+  second_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  mark_pane "$pane_id"
+  complete_pane "$second_pane"
+  retry_until finished_pane_is_timestamp "$second_pane"
+
+  rendered_status=$(tmux_test show-options -gqv '@tmux_agents_status')
+  case "$rendered_status" in
+    *'  #[fg=green]󱜚 1'*) ;;
+    *) fail "expected attention followed by two spaces and finished, got: $rendered_status" ;;
+  esac
+}
+
+@test "finished panes count across sessions and disappear when closed" {
+  second_session_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s other)
+  second_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+
+  complete_pane "$pane_id"
+  tmux_test run-shell -b \
+    "TMUX_PANE='$second_pane' '$project_root/scripts/hook.sh' complete"
+  tmux_test run-shell -b \
+    "TMUX_PANE='$second_session_pane' '$project_root/scripts/hook.sh' complete"
+  retry_until finished_status_is_count 3
+
+  tmux_test kill-pane -t "$second_pane"
+  retry_until finished_status_is_count 2
+}
+
+@test "selecting a finished pane acknowledges it without clearing attention" {
+  second_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  complete_pane "$second_pane"
+  retry_until finished_pane_is_timestamp "$second_pane"
+  mark_pane "$pane_id"
+  retry_until attention_is_timestamp
+
+  start_client
+  tmux_test select-pane -t "$second_pane"
+  retry_until finished_pane_is_clear "$second_pane"
+  [ -n "$(tmux_test show-options -pqv -t "$pane_id" \
+    '@tmux_agents_attention')" ]
 }
 
 @test "clearing one pane hides the bubble and is idempotent" {
@@ -389,6 +562,13 @@ attention_marker_is_replaced() {
   retry_until status_is_hidden
 }
 
+@test "Codex stop hook creates finished state through the companion adapter" {
+  codex_hook complete
+  retry_until finished_is_timestamp
+  retry_until attention_is_clear
+  retry_until finished_status_is_count 1
+}
+
 @test "Codex hook configuration covers permission and progress without structured questions" {
   hooks="$project_root/plugins/codex/plugins/tmux-agents/hooks/hooks.json"
 
@@ -399,7 +579,8 @@ attention_marker_is_replaced() {
   grep -F '"Stop": [' "$hooks"
   grep -F '"SessionEnd": [' "$hooks"
   clear_command='"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" clear"'
-  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 4 ]
+  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 3 ]
+  grep -F '"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" complete"' "$hooks"
   ! grep -F 'request_user_input' "$hooks"
 }
 
@@ -449,7 +630,8 @@ attention_marker_is_replaced() {
   grep -A 6 '"matcher": "ExitPlanMode"' "$hooks" |
     grep -F "$mark_command"
   [ "$(grep -F "$mark_command" "$hooks" | wc -l | tr -d ' ')" -eq 4 ]
-  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 6 ]
+  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 5 ]
+  grep -F '"command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" complete"' "$hooks"
 }
 
 @test "Claude interaction hooks delegate mark and progress to tmux" {
@@ -460,6 +642,12 @@ attention_marker_is_replaced() {
   claude_hook clear
   retry_until attention_is_clear
   retry_until status_is_hidden
+}
+
+@test "Claude stop hook creates finished state through the companion adapter" {
+  claude_hook complete
+  retry_until finished_is_timestamp
+  retry_until finished_status_is_count 1
 }
 
 @test "Claude adapter is silent when tmux or the shared hook is unavailable" {

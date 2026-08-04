@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" clear"
+            "command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" complete"
           }
         ]
       }

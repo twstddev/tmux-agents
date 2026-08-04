@@ -26,6 +26,9 @@ install_placeholder 'status-left'
 install_placeholder 'status-right'
 
 tmux set-hook -g 'after-kill-pane[1000]' \
-  "run-shell -b \"\"$plugin_path/scripts/status.sh\"\""
+  "run-shell \"\"$plugin_path/scripts/status.sh\"\""
+
+tmux set-hook -g 'after-select-pane[1000]' \
+  "run-shell -b \"\"$plugin_path/scripts/hook.sh\" view '#{pane_id}'\""
 
 "$plugin_path/scripts/status.sh"

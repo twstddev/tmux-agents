@@ -1,8 +1,9 @@
 # tmux-agents
 
 `tmux-agents` shows a robot bubble when a supported Codex or Claude Code
-interaction needs your attention. It counts marked panes in the current tmux
-server and lets you jump to the oldest one.
+interaction needs your attention. It also shows a quieter finished count when
+an Agent stops in a pane you are not viewing. Both counts cover the current
+tmux server.
 
 ## Requirements
 
@@ -28,6 +29,9 @@ uses a white foreground and red background by default; customize them with
 
 Press `prefix` + `a` to jump to the oldest marked pane across the current tmux
 server. Navigation does not clear the marker; the Agent's lifecycle hook does.
+Finished Agents appear as a green outlined robot and can be customized with
+`@tmux_agents_finished_fg`. Selecting a finished pane acknowledges the result
+and removes it from the count.
 
 ## Agent companions
 
@@ -44,6 +48,7 @@ Review and trust the hooks through Codex's native `/hooks` workflow. Permission
 requests are supported. Native structured `request_user_input` questions are
 not tracked, and a permission marker may remain until later tool or turn
 activity clears it.
+A normal stop creates a finished marker when its pane is not selected.
 
 ### Claude Code
 
@@ -54,4 +59,5 @@ claude plugin install tmux-agents@tmux-agents
 
 Review and trust the hooks through Claude Code's native plugin workflow.
 Permission prompts, `AskUserQuestion`, plan approval, and MCP elicitation are
-supported. Matching responses and later lifecycle activity clear the marker.
+supported. Matching responses and later lifecycle activity clear the marker. A
+normal stop creates a finished marker when its pane is not selected.

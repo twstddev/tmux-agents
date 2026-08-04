@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" clear"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" complete"
           }
         ]
       }
