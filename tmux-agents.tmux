@@ -28,7 +28,15 @@ install_placeholder 'status-right'
 tmux set-hook -g 'after-kill-pane[1000]' \
   "run-shell \"\"$plugin_path/scripts/status.sh\"\""
 
-tmux set-hook -g 'after-select-pane[1000]' \
-  "run-shell -b \"\"$plugin_path/scripts/hook.sh\" view '#{pane_id}'\""
+install_view_hook() {
+  hook_name=$1
+  tmux set-hook -g "${hook_name}[1000]" \
+    "run-shell -b \"\"$plugin_path/scripts/hook.sh\" view '#{pane_id}'\""
+}
+
+install_view_hook 'after-select-pane'
+install_view_hook 'after-select-window'
+install_view_hook 'client-session-changed'
+install_view_hook 'client-attached'
 
 "$plugin_path/scripts/status.sh"

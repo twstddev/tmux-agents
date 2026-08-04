@@ -377,6 +377,79 @@ attention_marker_is_replaced() {
     '@tmux_agents_attention')" ]
 }
 
+@test "switching to a window acknowledges its selected finished pane" {
+  target_window=$(tmux_test new-window -d -P -F '#{session_name}:#{window_index}')
+  target_pane=$(tmux_test list-panes -t "$target_window" -F '#{pane_id}')
+  observer_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s observer)
+  complete_pane "$target_pane"
+  retry_until finished_pane_is_timestamp "$target_pane"
+
+  start_client
+  start_client_on_session observer
+  tmux_test switch-client -c "$client_name" -t "$target_window"
+
+  retry_until finished_pane_is_clear "$target_pane"
+  retry_until status_is_hidden
+  [ "$(tmux_test display-message -p -t "$client2_name" '#{pane_id}')" = \
+    "$observer_pane" ]
+}
+
+@test "switching to a session acknowledges its selected finished pane" {
+  target_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s finished)
+  observer_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s observer)
+  complete_pane "$target_pane"
+  retry_until finished_pane_is_timestamp "$target_pane"
+
+  start_client
+  start_client_on_session observer
+  tmux_test switch-client -c "$client_name" -t finished
+
+  retry_until finished_pane_is_clear "$target_pane"
+  retry_until status_is_hidden
+  [ "$(tmux_test display-message -p -t "$client2_name" '#{pane_id}')" = \
+    "$observer_pane" ]
+}
+
+@test "attaching to a finished pane acknowledges it" {
+  complete_pane "$pane_id"
+  retry_until finished_is_timestamp
+
+  start_client
+
+  retry_until finished_is_clear
+  retry_until status_is_hidden
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$pane_id" ]
+}
+
+@test "attaching elsewhere leaves a finished pane unacknowledged" {
+  target_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  observer_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s observer)
+  start_client
+
+  complete_pane "$target_pane"
+  retry_until finished_pane_is_timestamp "$target_pane"
+  start_client_on_session observer
+
+  retry_until finished_pane_is_timestamp "$target_pane"
+  retry_until finished_status_is_count 1
+  [ "$(tmux_test display-message -p -t "$client2_name" '#{pane_id}')" = \
+    "$observer_pane" ]
+}
+
+@test "reloading preserves unrelated focus hooks and avoids duplicates" {
+  tmux_test set-hook -g 'after-select-window[0]' \
+    'display-message "user focus hook"'
+  tmux_test run-shell "'$project_root/tmux-agents.tmux'"
+  tmux_test run-shell "'$project_root/tmux-agents.tmux'"
+
+  hooks=$(tmux_test show-hooks -g after-select-window)
+  printf '%s\n' "$hooks" | grep -F 'user focus hook'
+  hook_count=$(printf '%s\n' "$hooks" |
+    grep -F "$project_root/scripts/hook.sh" | wc -l | tr -d ' ')
+  [ "$hook_count" -eq 1 ]
+}
+
 @test "clearing one pane hides the bubble and is idempotent" {
   tmux_test run-shell -b \
     "TMUX_PANE='$pane_id' '$project_root/scripts/hook.sh' mark"
