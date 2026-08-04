@@ -29,9 +29,10 @@ uses a white foreground and red background by default; customize them with
 
 Press `prefix` + `a` to jump to the oldest marked pane across the current tmux
 server. Navigation does not clear the marker; the Agent's lifecycle hook does.
-Finished Agents appear as a green outlined robot and can be customized with
-`@tmux_agents_finished_fg`. Selecting a finished pane acknowledges the result
-and removes it from the count.
+Press `prefix` + `A` to jump to the oldest unseen finished Agent across the
+current tmux server. Selecting a finished pane acknowledges the result and
+removes it from the count. Finished Agents appear as a green outlined robot
+and can be customized with `@tmux_agents_finished_fg`.
 
 ## Agent companions
 

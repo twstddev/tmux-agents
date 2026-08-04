@@ -140,9 +140,17 @@ status_is_count_on_socket() {
 }
 
 finished_status_is_count() {
-  rendered_status=$(tmux_test show-options -gqv '@tmux_agents_status')
+  finished_status_is_count_on_socket "$socket_path" "$1"
+}
+
+other_finished_status_is_count() {
+  finished_status_is_count_on_socket "$other_socket_path" "$1"
+}
+
+finished_status_is_count_on_socket() {
+  rendered_status=$(tmux_on_socket "$1" show-options -gqv '@tmux_agents_status')
   case "$rendered_status" in
-    *'#[fg=green]󱜚 '"$1"*) return 0 ;;
+    *'#[fg=green]󱜚 '"$2"*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -162,9 +170,25 @@ prefix_a_is_bound() {
     grep -F "$project_root/scripts/navigate.sh" >/dev/null
 }
 
+prefix_A_is_bound() {
+  tmux_test list-keys -T prefix A 2>/dev/null |
+    grep -F "$project_root/scripts/navigate.sh" |
+    grep -F 'finished' >/dev/null
+}
+
 client_is_on_pane() {
   [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}' \
     2>/dev/null)" = "$oldest_pane" ]
+}
+
+client_is_on_finished_target() {
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}' \
+    2>/dev/null)" = "$second_finished_pane" ]
+}
+
+client_is_on_lower_id_pane() {
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}' \
+    2>/dev/null)" = "$lower_id_pane" ]
 }
 
 client_exists() {
@@ -218,6 +242,11 @@ second_client_is_on_current_pane() {
 attention_message_is_visible() {
   tmux_test show-messages 2>/dev/null |
     grep -F 'No agents need attention' >/dev/null
+}
+
+finished_message_is_visible() {
+  tmux_test show-messages 2>/dev/null |
+    grep -F 'No agents have finished' >/dev/null
 }
 
 attention_marker_is_replaced() {
@@ -549,8 +578,30 @@ attention_marker_is_replaced() {
   retry_until other_status_is_count 1
 }
 
+@test "finished navigation stays within its tmux socket" {
+  other_tmux_test new-session -d -s other -x 80 -y 24
+  other_tmux_test run-shell -b "'$project_root/tmux-agents.tmux'"
+  retry_until other_plugin_path_is_recorded
+  other_pane_id=$(other_tmux_test display-message -p '#{pane_id}')
+  other_tmux_test run-shell -b \
+    "TMUX_PANE='$other_pane_id' '$project_root/scripts/hook.sh' complete"
+  retry_until other_finished_status_is_count 1
+
+  start_client
+  tmux_test run-shell -b \
+    "'$project_root/scripts/navigate.sh' '$client_name' finished"
+  retry_until finished_message_is_visible
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$pane_id" ]
+}
+
 @test "loading binds prefix plus lowercase a to attention navigation" {
   retry_until prefix_a_is_bound
+}
+
+@test "loading binds prefix plus uppercase A to finished navigation" {
+  retry_until prefix_a_is_bound
+  retry_until prefix_A_is_bound
 }
 
 @test "navigation reports an empty attention queue without changing the pane" {
@@ -563,6 +614,34 @@ attention_marker_is_replaced() {
 
   [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
     "$original_pane" ]
+}
+
+@test "finished navigation reports an empty queue without changing the pane" {
+  original_pane=$pane_id
+
+  start_client
+  tmux_test run-shell -b \
+    "'$project_root/scripts/navigate.sh' '$client_name' finished"
+  retry_until finished_message_is_visible
+
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$original_pane" ]
+}
+
+@test "finished navigation ignores attention markers" {
+  start_client
+  mark_pane "$pane_id"
+  retry_until attention_is_timestamp
+
+  finished_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s finished)
+  complete_pane "$finished_pane"
+  retry_until finished_pane_is_timestamp "$finished_pane"
+  printf '\002A' >&9
+
+  retry_until finished_pane_is_clear "$finished_pane"
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$finished_pane" ]
+  attention_is_timestamp
 }
 
 @test "navigation selects the oldest marked pane across sessions for its client" {
@@ -579,6 +658,63 @@ attention_marker_is_replaced() {
   retry_until status_is_count 2
   [ "$(tmux_test show-options -pqv -t "$oldest_pane" \
     '@tmux_agents_attention')" ]
+}
+
+@test "uppercase navigation selects and acknowledges the oldest finished pane" {
+  oldest_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s oldest)
+  complete_pane "$oldest_pane"
+  retry_until finished_pane_is_timestamp "$oldest_pane"
+  sleep 1
+  start_client
+  second_finished_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s second)
+  complete_pane "$second_finished_pane"
+  retry_until finished_pane_is_timestamp "$second_finished_pane"
+  printf '\002A' >&9
+
+  retry_until client_is_on_pane
+  retry_until finished_pane_is_clear "$oldest_pane"
+  retry_until finished_status_is_count 1
+}
+
+@test "repeated uppercase navigation advances only its invoking client" {
+  oldest_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s oldest)
+  complete_pane "$oldest_pane"
+  retry_until finished_pane_is_timestamp "$oldest_pane"
+  sleep 1
+  second_finished_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s second)
+  complete_pane "$second_finished_pane"
+  retry_until finished_pane_is_timestamp "$second_finished_pane"
+
+  start_client
+  start_second_client
+  printf '\002A' >&9
+
+  retry_until client_is_on_pane
+  retry_until finished_pane_is_clear "$oldest_pane"
+  retry_until second_client_is_on_current_pane
+
+  printf '\002A' >&9
+  retry_until finished_pane_is_clear "$second_finished_pane"
+  retry_until client_is_on_finished_target
+  retry_until status_is_hidden
+}
+
+@test "equal finished timestamps use pane identifier order" {
+  lower_id_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  higher_id_pane=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  tmux_test set-option -pq -t "$lower_id_pane" \
+    '@tmux_agents_finished' 123
+  tmux_test set-option -pq -t "$higher_id_pane" \
+    '@tmux_agents_finished' 123
+
+  start_client
+  printf '\002A' >&9
+
+  retry_until client_is_on_lower_id_pane
+  retry_until finished_pane_is_clear "$lower_id_pane"
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$lower_id_pane" ]
+  finished_pane_is_timestamp "$higher_id_pane"
 }
 
 @test "navigation leaves other attached clients in place" {
@@ -610,6 +746,23 @@ attention_marker_is_replaced() {
     tmux_test show-options -gqv '@tmux_agents_status'
     false
   fi
+  [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
+    "$pane_id" ]
+}
+
+@test "finished navigation tolerates a target vanishing during selection" {
+  start_client
+  oldest_finished_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s oldest)
+  second_finished_pane=$(tmux_test new-session -d -P -F '#{pane_id}' -s second)
+  complete_pane "$oldest_finished_pane"
+  complete_pane "$second_finished_pane"
+  retry_until finished_pane_is_timestamp "$oldest_finished_pane"
+  retry_until finished_pane_is_timestamp "$second_finished_pane"
+
+  tmux_test run-shell -b \
+    "PATH='$project_root/tests/fixtures:$PATH' REAL_TMUX='$(command -v tmux)' RACE_TARGET='$oldest_finished_pane' '$project_root/scripts/navigate.sh' '$client_name' finished"
+
+  retry_until finished_status_is_count 1
   [ "$(tmux_test display-message -p -t "$client_name" '#{pane_id}')" = \
     "$pane_id" ]
 }
