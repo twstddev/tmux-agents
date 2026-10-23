@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" start"
+          }
+        ]
+      }
+    ],
     "PermissionRequest": [
       {
         "hooks": [
@@ -45,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" clear",
+            "command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" end",
             "timeout": 3
           }
         ]

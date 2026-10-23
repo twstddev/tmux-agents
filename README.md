@@ -62,3 +62,24 @@ Review and trust the hooks through Claude Code's native plugin workflow.
 Permission prompts, `AskUserQuestion`, plan approval, and MCP elicitation are
 supported. Matching responses and later lifecycle activity clear the marker. A
 normal stop creates a finished marker when its pane is not selected.
+
+## Resume agents with tmux-resurrect
+
+Resume the same conversation when restoring an agent pane. Requires
+[tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect), `jq`, and the
+matching agent companion. Example configuration for `~/.tmux.conf`:
+
+```tmux
+set -g @resurrect-hook-post-save-layout '"$HOME/.tmux/plugins/tmux-agents/scripts/resurrect.sh"'
+set -g @resurrect-processes 'codex claude'
+```
+
+Keep any existing process entries. If you already have a save hook, call this
+script from it with the snapshot filename.
+
+Reload tmux and restart agents after updating their companions. Review and
+trust the updated hooks in Codex.
+
+Supports foreground processes named `codex` or `claude`. Resumed agents use
+their normal configuration; custom launch flags and running tools are not
+restored.

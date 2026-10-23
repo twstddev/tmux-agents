@@ -4,7 +4,7 @@ set -eu
 
 operation=${1-}
 case "$operation" in
-  mark|clear|complete) ;;
+  mark|clear|complete|start|end) ;;
   *) exit 0 ;;
 esac
 
@@ -16,4 +16,4 @@ plugin_path=$(tmux show-options -gqv '@tmux_agents_plugin_path' \
 shared_hook="$plugin_path/scripts/hook.sh"
 
 [ -x "$shared_hook" ] || exit 0
-exec "$shared_hook" "$operation"
+exec "$shared_hook" "$operation" "${TMUX_PANE-}" codex

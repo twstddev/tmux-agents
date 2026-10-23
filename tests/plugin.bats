@@ -805,7 +805,10 @@ attention_marker_is_replaced() {
   grep -F '"Stop": [' "$hooks"
   grep -F '"SessionEnd": [' "$hooks"
   clear_command='"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" clear"'
-  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 3 ]
+  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 2 ]
+  grep -F '"SessionStart": [' "$hooks"
+  grep -F '"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" start"' "$hooks"
+  grep -F '"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" end"' "$hooks"
   grep -F '"command": "sh \"${PLUGIN_ROOT}/scripts/hook.sh\" complete"' "$hooks"
   ! grep -F 'request_user_input' "$hooks"
 }
@@ -856,7 +859,10 @@ attention_marker_is_replaced() {
   grep -A 6 '"matcher": "ExitPlanMode"' "$hooks" |
     grep -F "$mark_command"
   [ "$(grep -F "$mark_command" "$hooks" | wc -l | tr -d ' ')" -eq 4 ]
-  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 5 ]
+  [ "$(grep -F "$clear_command" "$hooks" | wc -l | tr -d ' ')" -eq 4 ]
+  grep -F '"SessionStart": [' "$hooks"
+  grep -F '"command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" start"' "$hooks"
+  grep -F '"command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" end"' "$hooks"
   grep -F '"command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" complete"' "$hooks"
 }
 
@@ -895,9 +901,241 @@ attention_marker_is_replaced() {
     "$project_root/scripts/hook.sh" \
     "$project_root/scripts/navigate.sh" \
     "$project_root/scripts/status.sh" \
+    "$project_root/scripts/resurrect.sh" \
     "$project_root/plugins/codex/plugins/tmux-agents/scripts/hook.sh" \
     "$project_root/plugins/claude/plugins/tmux-agents/scripts/hook.sh"; do
     run sh -n "$runtime_script"
     [ "$status" -eq 0 ]
+  done
+}
+
+agent_hook_json() {
+  printf '%s' "$3" > "$BATS_TEST_TMPDIR/hook-input.json"
+  tmux_test run-shell \
+    "TMUX_PANE='$pane_id' '$project_root/plugins/$1/plugins/tmux-agents/scripts/hook.sh' '$2' < '$BATS_TEST_TMPDIR/hook-input.json'"
+}
+
+resume_command() {
+  tmux_test show-options -pqv -t "$pane_id" '@tmux_agents_resume_command'
+}
+
+enable_resurrect() {
+  printf -v quoted_script '%q' "$project_root/scripts/resurrect.sh"
+  tmux_test set-option -g '@resurrect-hook-post-save-layout' "$quoted_script"
+}
+
+pane_command_is() {
+  [ "$(tmux_test display-message -p -t "$pane_id" '#{pane_current_command}')" = "$1" ]
+}
+
+start_fake_agent() {
+  fake_bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$fake_bin"
+  # A copied shell blocked in a builtin gives tmux a real agent process name.
+  cp "$(command -v sh)" "$fake_bin/$1"
+  tmux_test set-option -w remain-on-exit on
+  tmux_test respawn-pane -k -t "$pane_id" -c "${agent_directory:-$project_root}" \
+    "$fake_bin/$1" -c 'read line'
+  if ! retry_until pane_command_is "$1"; then
+    tmux_test capture-pane -p -t "$pane_id"
+    return 1
+  fi
+}
+
+write_agent_snapshot() {
+  snapshot="$BATS_TEST_TMPDIR/snapshot.txt"
+  printf 'pane\tagents\t0\t1\t:*\t0\t\t:/tmp/work\\ tree\t1\t%s\t:%s\n' \
+    "$1" "$2" > "$snapshot"
+  printf 'window\tagents\t0\t:work\t1\t:*\tlayout\ton\n' >> "$snapshot"
+}
+
+save_agent_snapshot() {
+  tmux_test run-shell "sh '$project_root/scripts/resurrect.sh' '$snapshot'"
+}
+
+@test "companion hooks track exact sessions through activity and clear them on exit" {
+  for agent in codex claude; do
+    case "$agent" in
+      codex) expected='codex resume session-123' ;;
+      claude) expected='claude --resume session-123' ;;
+    esac
+    agent_hook_json "$agent" start '{"session_id":"session-123"}'
+    [ "$(resume_command)" = "$expected" ]
+    agent_hook_json "$agent" clear '{"session_id":"session-123"}'
+    [ "$(resume_command)" = "$expected" ]
+    agent_hook_json "$agent" complete '{"session_id":"session-123"}'
+    [ "$(resume_command)" = "$expected" ]
+    agent_hook_json "$agent" end '{"session_id":"session-123"}'
+    [ -z "$(resume_command)" ]
+    attention_is_clear
+    finished_is_clear
+  done
+}
+
+@test "activity leaves session identity alone and late exits preserve its replacement" {
+  agent_hook_json codex start '{"session_id":"old-session"}'
+  agent_hook_json codex mark '{"session_id":"unrelated-session"}'
+  [ "$(resume_command)" = 'codex resume old-session' ]
+  agent_hook_json codex start '{"session_id":"new-session"}'
+  agent_hook_json codex mark '{"session_id":"new-session"}'
+  agent_hook_json codex end '{"session_id":"old-session"}'
+  [ "$(resume_command)" = 'codex resume new-session' ]
+  attention_is_timestamp
+}
+
+@test "malformed hook input and unsafe session IDs leave attention tracking working" {
+  for payload in 'not json' '{}' '{"session_id":12}' \
+    '{"session_id":"--last"}' '{"session_id":"id; touch /tmp/injected"}' \
+    '{"session_id":"first"} {"session_id":"second"}'; do
+    agent_hook_json claude start "$payload"
+    [ -z "$(resume_command)" ]
+    agent_hook_json claude mark "$payload"
+    attention_is_timestamp
+  done
+}
+
+@test "resurrect leaves node launchers unchanged" {
+  start_fake_agent node
+  agent_hook_json codex start '{"session_id":"codex-session"}'
+  write_agent_snapshot node '/usr/bin/node /tmp/@openai/codex/bin/codex.js --flag'
+  cp "$snapshot" "$BATS_TEST_TMPDIR/expected.txt"
+  save_agent_snapshot
+  cmp "$snapshot" "$BATS_TEST_TMPDIR/expected.txt"
+}
+
+@test "attention hooks still work without jq on PATH" {
+  minimal_bin="$BATS_TEST_TMPDIR/minimal-bin"
+  mkdir -p "$minimal_bin"
+  for utility in sh dirname tmux date; do
+    ln -s "$(command -v "$utility")" "$minimal_bin/$utility"
+  done
+  tmux_test run-shell \
+    "PATH='$minimal_bin' TMUX_PANE='$pane_id' '$project_root/plugins/codex/plugins/tmux-agents/scripts/hook.sh' start"
+  tmux_test run-shell \
+    "PATH='$minimal_bin' TMUX_PANE='$pane_id' '$project_root/plugins/codex/plugins/tmux-agents/scripts/hook.sh' mark"
+  attention_is_timestamp
+  [ -z "$(resume_command)" ]
+}
+
+@test "loading the plugin leaves the configured resurrect hook alone" {
+  original_hook='printf "%s\n"'
+  tmux_test set-option -g '@resurrect-hook-post-save-layout' "$original_hook"
+  tmux_test run-shell "'$project_root/tmux-agents.tmux'"
+  tmux_test run-shell "'$project_root/tmux-agents.tmux'"
+  [ "$(tmux_test show-options -gqv '@resurrect-hook-post-save-layout')" = "$original_hook" ]
+}
+
+@test "resurrect rewrites native agents with exact IDs and preserves other snapshot fields" {
+  for agent in codex claude; do
+    start_fake_agent "$agent"
+    agent_hook_json "$agent" start '{"session_id":"exact-session"}'
+    write_agent_snapshot "$agent" "$fake_bin/$agent --old-flag"
+    expected_snapshot="$BATS_TEST_TMPDIR/expected.txt"
+    printf 'pane\tagents\t0\t1\t:*\t0\t\t:/tmp/work\\ tree\t1\t%s\t:%s\n' \
+      "$agent" "$(resume_command)" > "$expected_snapshot"
+    printf 'window\tagents\t0\t:work\t1\t:*\tlayout\ton\n' >> "$expected_snapshot"
+    save_agent_snapshot
+    cmp "$snapshot" "$expected_snapshot"
+    save_agent_snapshot
+    cmp "$snapshot" "$expected_snapshot"
+  done
+}
+
+@test "resurrect leaves stale, missing, and invalid session metadata unchanged" {
+  # A stale ID on a shell must not resurrect an agent that has already exited.
+  agent_hook_json codex start '{"session_id":"stale-session"}'
+  current=$(tmux_test display-message -p -t "$pane_id" '#{pane_current_command}')
+  write_agent_snapshot "$current" "$current"
+  cp "$snapshot" "$BATS_TEST_TMPDIR/expected.txt"
+  save_agent_snapshot
+  cmp "$snapshot" "$BATS_TEST_TMPDIR/expected.txt"
+
+  start_fake_agent codex
+  write_agent_snapshot codex codex
+  cp "$snapshot" "$BATS_TEST_TMPDIR/expected.txt"
+  for command in '' 'claude --resume wrong-agent' 'codex resume id; echo injected'; do
+    tmux_test set-option -pq -t "$pane_id" '@tmux_agents_resume_command' "$command"
+    save_agent_snapshot
+    cmp "$snapshot" "$BATS_TEST_TMPDIR/expected.txt"
+  done
+}
+
+@test "explicit hook composition passes quoted filenames and saves after a user hook fails" {
+  start_fake_agent codex
+  agent_hook_json codex start '{"session_id":"exact-session"}'
+  write_agent_snapshot codex codex
+  unusual_snapshot="$BATS_TEST_TMPDIR/it's a \$(snapshot).txt"
+  mv "$snapshot" "$unusual_snapshot"
+  snapshot=$unusual_snapshot
+
+  original_hook='record_snapshot() { [[ -f "$1" ]] && printf "%s\n" "$1" > "$1.received"; cp "$1" "$1.before"; return 1; }'
+  printf -v quoted_script '%q' "$project_root/scripts/resurrect.sh"
+  hook="$original_hook; save_layout() { record_snapshot \"\$1\" || :; $quoted_script \"\$1\"; }; save_layout"
+  printf -v quoted_snapshot '%q' "$snapshot"
+  tmux_test run-shell "bash -c $(printf '%q' "$hook $quoted_snapshot")"
+
+  [ "$(cat "$snapshot.received")" = "$snapshot" ]
+  [ "$(cut -f11 "$snapshot.before" | head -n 1)" = ':codex' ]
+  [ "$(cut -f11 "$snapshot" | head -n 1)" = ':codex resume exact-session' ]
+}
+
+@test "the save hook supports plugin paths with spaces and quotes" {
+  start_fake_agent codex
+  agent_hook_json codex start '{"session_id":"exact-session"}'
+  linked_plugin="$BATS_TEST_TMPDIR/agent's plugin"
+  ln -s "$project_root" "$linked_plugin"
+  printf -v quoted_plugin '%q' "$linked_plugin/scripts/resurrect.sh"
+  write_agent_snapshot codex codex
+  tmux_test run-shell "$quoted_plugin '$snapshot'"
+  [ "$(cut -f11 "$snapshot" | head -n 1)" = ':codex resume exact-session' ]
+  [ -z "$(find "$BATS_TEST_TMPDIR" -name '*.agents.*' -print)" ]
+}
+
+@test "tmux-resurrect saves and restores both agents in their original panes and directory" {
+  resurrect_root=${TMUX_RESURRECT_PATH:-$HOME/.tmux/plugins/tmux-resurrect}
+  [ -f "$resurrect_root/scripts/save.sh" ] || skip 'set TMUX_RESURRECT_PATH to run the upstream integration test'
+  agent_directory="$BATS_TEST_TMPDIR/work tree"
+  mkdir -p "$agent_directory"
+  start_fake_agent codex
+  agent_hook_json codex start '{"session_id":"codex-session"}'
+  pane_id=$(tmux_test split-window -d -P -F '#{pane_id}' -t "$pane_id")
+  start_fake_agent claude
+  agent_hook_json claude start '{"session_id":"claude-session"}'
+  enable_resurrect
+  tmux_test set-option -g '@resurrect-dir' "$BATS_TEST_TMPDIR/saves"
+  tmux_test set-option -g '@resurrect-processes' 'codex claude'
+  tmux_test run-shell "bash '$resurrect_root/scripts/save.sh' quiet"
+  saved_snapshot="$BATS_TEST_TMPDIR/saves/last"
+  [ "$(awk -F '\t' '$1 == "pane" && $6 == 0 { print $11 }' "$saved_snapshot")" = ':codex resume codex-session' ]
+  [ "$(awk -F '\t' '$1 == "pane" && $6 == 1 { print $11 }' "$saved_snapshot")" = ':claude --resume claude-session' ]
+
+  # Replace fake native executables with loggers for the restore commands.
+  cat > "$fake_bin/restored-agent" <<'SH'
+#!/bin/sh
+printf '%s\n%s\n' "$*" "$PWD" > "$AGENT_TEST_LOG.${0##*/}"
+exec sleep 120
+SH
+  chmod +x "$fake_bin/restored-agent"
+  for agent in codex claude; do
+    cp "$fake_bin/restored-agent" "$fake_bin/$agent.next"
+    mv -f "$fake_bin/$agent.next" "$fake_bin/$agent"
+  done
+  tmux_test set-option -g default-shell /bin/sh
+  tmux_test set-option -g default-command /bin/sh
+  tmux_test new-session -d -s temporary
+  tmux_test kill-session -t agents
+  tmux_test set-environment -g PATH "$fake_bin:$PATH"
+  tmux_test set-environment -g AGENT_TEST_LOG "$BATS_TEST_TMPDIR/restored.log"
+  tmux_test run-shell "PATH='$fake_bin:$PATH' bash '$resurrect_root/scripts/restore.sh' > '$BATS_TEST_TMPDIR/restore-output' 2>&1"
+  if ! retry_until test -f "$BATS_TEST_TMPDIR/restored.log.claude"; then
+    cat "$BATS_TEST_TMPDIR/restore-output"
+    tmux_test list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_command}'
+    tmux_test capture-pane -p -t agents:0.0
+    return 1
+  fi
+  [ "$(sed -n '1p' "$BATS_TEST_TMPDIR/restored.log.codex")" = 'resume codex-session' ]
+  [ "$(sed -n '1p' "$BATS_TEST_TMPDIR/restored.log.claude")" = '--resume claude-session' ]
+  for agent in codex claude; do
+    [ "$(sed -n '2p' "$BATS_TEST_TMPDIR/restored.log.$agent")" = "$agent_directory" ]
   done
 }
