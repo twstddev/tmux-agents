@@ -83,3 +83,6 @@ trust the updated hooks in Codex.
 Supports foreground processes named `codex` or `claude`. Resumed agents use
 their normal configuration; custom launch flags and running tools are not
 restored.
+
+Popup backing sessions named `__agent_popup_<number>` are excluded from saved
+layouts, so they start fresh after a tmux restart. Ordinary agent panes still resume.

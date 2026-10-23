@@ -22,6 +22,13 @@ printf '%s\n' "$panes" | awk -F '\t' '
     }
     next
   }
+  function popup(name) { return name ~ /^__agent_popup_[0-9]+$/ }
+  ($1 == "pane" || $1 == "window" || $1 == "grouped_session") && popup($2) { next }
+  $1 == "grouped_session" && popup($3) { next }
+  $1 == "state" {
+    if (popup($2)) $2 = ""
+    if (popup($3)) $3 = ""
+  }
   $1 == "pane" && NF == 11 {
     command = resume[$2, $3, $6, $10]
     if (command != "") $11 = ":" command

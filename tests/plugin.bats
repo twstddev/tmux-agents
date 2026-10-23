@@ -1139,3 +1139,26 @@ SH
     [ "$(sed -n '2p' "$BATS_TEST_TMPDIR/restored.log.$agent")" = "$agent_directory" ]
   done
 }
+
+@test "resurrect excludes popup layouts and references while preserving ordinary agent resumes" {
+  start_fake_agent codex
+  agent_hook_json codex start '{"session_id":"ordinary-session"}'
+  write_agent_snapshot codex codex
+  expected_snapshot="$BATS_TEST_TMPDIR/expected.txt"
+  cp "$snapshot" "$expected_snapshot"
+  sed 's/:codex$/:codex resume ordinary-session/' "$expected_snapshot" > "$expected_snapshot.next"
+  mv "$expected_snapshot.next" "$expected_snapshot"
+  cat >> "$snapshot" <<'SNAPSHOT'
+pane	__agent_popup_12	0	1	:*	0	popup	:/tmp	1	codex	:codex
+window	__agent_popup_12	0	:popup	1	:*	layout	on
+grouped_session	__agent_popup_12	agents	:0	:0
+grouped_session	popup-group	__agent_popup_12	:0	:0
+state	agents	__agent_popup_12
+state	__agent_popup_12	agents
+pane	__agent_popup_notes	0	1	:*	0	notes	:/tmp	1	sh	:sh
+SNAPSHOT
+  printf 'state\tagents\t\nstate\t\tagents\n' >> "$expected_snapshot"
+  printf 'pane\t__agent_popup_notes\t0\t1\t:*\t0\tnotes\t:/tmp\t1\tsh\t:sh\n' >> "$expected_snapshot"
+  save_agent_snapshot
+  cmp "$snapshot" "$expected_snapshot"
+}
